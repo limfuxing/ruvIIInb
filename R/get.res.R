@@ -34,10 +34,9 @@ get.res <- function(out,type='pearson',batch=NULL) {
     mu <- mu/(1-out$pi0)
     if(type=='pearson') {
        if(is.null(dim(out$psi)))
-        dev <- (Y-mu*(1-out$pi0))/sqrt(mu+mu^2*(out$psi.DE+out$pi0)/(1-out$pi0))
+        dev <- (Y-mu*(1-out$pi0))/sqrt(mu*(1-out$pi0)*(1+mu*(out$psi.DE+out$pi0)))
        if(!is.null(dim(out$psi)))
-        dev <- (Y-mu*(1-out$pi0))/sqrt(mu+mu^2*(out$psi.DE[,batch]+out$pi0)/(1-out$pi0))
-		
+        dev <- (Y-mu*(1-out$pi0))/sqrt(mu*(1-out$pi0)*(1+mu*(out$psi.DE[,batch]+out$pi0)))
 	lims<- quantile(c(dev),prob=c(0.0005,0.9995),na.rm=T)
 	dev[dev< lims[1]] <- lims[1] ; dev[dev>lims[2]] <- lims[2]
     }
