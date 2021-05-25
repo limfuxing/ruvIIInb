@@ -1,0 +1,26 @@
+Package: ruvIIInb
+Title: Removing unwanted variation from sequencing count data
+Version: 0.7.5.0
+Authors@R: 
+    person(given = "Agus",
+           family = "Salim",
+           role = c("aut", "cre"),
+           email = "salim.a@unimelb.edu.au",
+           comment = c(ORCID = "0000-0003-3999-7701"))
+Description: This package removes unwanted variation from raw sequencing count data using Negative Binomial and/or Zero Inflated Negative Binomial model.
+License: `use_gpl3_license()`
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.1.0
+Imports: edgeR (>= 3.28.1), doParallel (>= 1.0.15),
+        SingleCellExperiment (>= 1.8.0), Rfast (>= 1.9.9), parallel (>=
+        3.6.1), foreach (>= 1.5.0), MASS (>= 7.3-51.4), BiocParallel
+        (>= 1.20.1), DescTools (>= 0.99.38), Matrix (>= 1.2-17), ZIM (>= 1.1.0)
+Suggests: knitr, rmarkdown
+VignetteBuilder: knitr
+Depends: R (>= 2.10)
+NeedsCompilation: no
+Packaged: 2021-02-14 09:44:06 UTC; asalim
+Author: Agus Salim [aut, cre] (<https://orcid.org/0000-0003-3999-7701>)
+Maintainer: Agus Salim <salim.a@unimelb.edu.au>

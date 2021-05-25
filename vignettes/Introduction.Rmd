@@ -1,0 +1,121 @@
+---
+title: "Introduction to ruvIIInb package"
+author:
+  - name: Agus Salim
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Introduction}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+knitr::opts_chunk$set(fig.width=9, fig.height=6) 
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(ruvIIInb)
+```
+
+# A brief on RUV-III-NB model
+The standard RUV-III-NB model uses a Negative Binomial (NB) distribution to model the raw count for gene $i$ and cell $j$. Zero-inflated NB (ZINB) model is also available and is recommended when fitting scRNA-seq data without UMI. But for simplicity, we will only discuss the NB model here. Assuming we have $N$ cells and $G$ genes, each gene has a unique dispersion parameter $\psi_i, i=1,2,\ldots G$ and within a gene, the mean parameter is allowed to vary across cells, with the vector of mean parameter $\mu_i = (\mu_{i1},\mu_{i2},\ldots,\mu_{iN})^T$ being a function of unknown unwanted factors $W(N \times K)$ via a generalized linear model (GLM),
+$$
+\log \mu_{i} = \zeta_i + M\beta_i + W\alpha_i
+$$
+where $\zeta_i$ is the common intercept parameter, $M(N \times R)$ is the replicate matrix (i.e., $m_{jr}=1$ if cell $j$ is a member of replicate $r$ and 0 otherwise), $\beta_i(R\times1)$ is the vector of intercept for gene $i$ that capture heterogeneity between replicates and finally $\alpha_i(K \times 1)$ is the vector of regression coefficient associated with the unwanted factors. Unwanted variation due to factors such as library size and batch effect is captured via the $W$ matrix. For example, when $K=1$ and the $W$ column is approximately equal (up to a multiplicative constant) to log library size then $\mu_i \propto (LS)_i^{\alpha_i}$, thus ruvIIInb is allowing a possibly non-linear, gene-specific relationship between library size and raw count.
+
+To estimate the unkwown unwanted factors and the regression coefficients, we use iterative reiweighted least squares (IRLS) algorithm that takes advantage of negative control genes (genes where $\beta_i \approx 0$) and sets of replicates (i.e, a set is a collection of cells where the gene expression variation across the cells is solely due to the unwanted factors.)
+
+
+# QC and pre-filtering
+Prior to using ruvIIInb, we assume that user have created a `SingleCellExperiment` object that contains the raw data and subsequnetly have performed QC steps using external package such as `scater` to remove quality cells. Here, we already prepared `cll.data` object that contains the raw count for all cells that passed QC steps. 
+
+In addition, we also recommend that only genes with high enough abundance corresponding to the second peak in the histogram of log average raw counts (see Figure\ref(fig:logAveCount)) be retained. 
+
+```{r logAveCount, fig.cap='Histogram of Log Average Raw Count. The red vertical line is the treshold chosen for defining abundant genes. In this case, using a treshold anywhere between -3 and -2 is acceptable.', echo=FALSE}
+hist(log(rowMeans(assays(cll.data)$counts)),breaks=50,main='Log Average Raw Count, CLL Data',xlab='Log Average Count')
+abline(v=log(0.1),col=2)
+```
+
+First, we remove the low abundant genes,
+```{r, echo=FALSE}
+cll.data <- subset(cll.data, rowMeans(assays(cll.data)$counts)> 0.1)
+```
+
+If the data comes from multiple batches, such as is the case with our CLL data, we also recommend an extra filtering step where only genes observed at least once in each batch, is retained.
+```{r, echo=FALSE}
+batch <- unique(cll.data$plate_number)
+ncells.expr <- sapply(batch,FUN=function(batch,sce=cll.data) { 
+     apply(assays(sce)$counts[,sce$plate_number==batch]>0,1,sum)
+     })
+cll.data <- subset(cll.data,rowMins(ncells.expr)>0)
+```
+
+## Using only Highly-Variable Genes (optional)
+Running ruvIIInb requires considerable computational resources. If you have limited resources, an alternative would be to run ruvIIInb using only highly-variable genes (HVG). Because the variation in scRNA-seq expression data is related to the mean expression, HVGs are usually defined as genes with large variance compared to genes with the same mean expression. There are several functions that can be used to identify HVGs. Here, we are going to use `scran::modelGeneVar` and define HVG as genes with biological variation above the 90th percentile.
+
+```{r,eval=FALSE}
+hvg.df      <- scran::modelGeneVar(cll.data)
+hvg.df      <- hvg.df[rownames(cll.data),]
+hvg.genes   <- hvg.df$bio>quantile(hvg.df$bio,prob=0.9)
+cll.data    <- subset(cll.data,hvg.genes)
+```
+
+# Fitting RUV-III-NB
+```{r setup, message=FALSE}
+library(ruvIIInb)
+library(SingleCellExperiment)
+```
+
+We will use Thijssen's dataset to demonstrate ruvIIInb. The dataset is part of a study that investigated B-cells response to various chronic lymphoid leukemia (CLL) treatments. This particular data was generated using CEL-Seq2 protocols and we will analyse data from 7 plates containing cells that have been exposed to treatment for 3 weeks. The preprocessed dataset is available in a SingleCellExperiment object as part of ruvIIInb package. For this experiment, we have technical replicates in the form of Granta cells that were placed in a number of wells in each plate. We formed the replicate matrix by declaring all the Granta cells as replicates and leaving the other cells as singletons (distinct cells). The replicate matrix `M' and the logical vector of control genes are also supplied as part of the package.
+
+```{r,message=FALSE,eval=FALSE}
+# fit ruvIIInb with K=7 using 4 cores
+thijssen.run <- ruvIII.nb(Y=as.matrix(assays(cll.data)$counts),M=M,ctl=ctl,k=7,ncores=4)
+```
+
+## Working with Normalized Data
+
+We can now use the ruvIIInb output to create a SingleCellExperiment object that contains the normalized data in the \texttt{pearson} and \texttt{logcorrected} components of the \texttt{assay} slot. Once created, the SCE object can be used for downstream analysis such as dimensional reduction, clustering and differential expression analysis. 
+
+```{r, fig.asp=0.8}
+sce.ruv3nb <- makeSCE(thijssen.run,cData=colData(cll.data))
+# PCA of scran-normalized data
+sce <- scater::runPCA(cll.data, exprs_values = "logcounts")
+# PCA of normalized data (using log corrected data)
+sce.ruv3nb <- scater::runPCA(sce.ruv3nb, exprs_values = "logcorrected")
+# PCA visualization
+library(ggplot2)
+p1 <- scater::plotPCA(sce, ncomponents=2,colour_by = "logLS",point_alpha=0.5, point_size=1) + ggtitle('scran-normalized')
+p2 <- scater::plotPCA(sce.ruv3nb, ncomponents=2,
+    colour_by = "logLS",point_alpha=0.5, point_size=1) +  ggtitle('ruvIIInb-normalized')
+p3 <- scater::plotPCA(sce, ncomponents=2,
+    colour_by = "treatment",point_alpha=0.5, point_size=1) + ggtitle('scran-normalized')
+p4 <- scater::plotPCA(sce.ruv3nb, ncomponents=2,
+    colour_by = "treatment",point_alpha=0.5, point_size=1) +  ggtitle('ruvIIInb-normalized')
+scater::multiplot(p1,p3,p2,p4,cols=2)
+
+# show plate-effect in the scran-normalized data
+scater::plotPCA(sce, ncomponents=2,
+    colour_by = "plate_number",point_alpha=0.5, point_size=1)  +  ggtitle('scran-normalized') + facet_wrap(~sce.ruv3nb$treatment)
+# show much reduced plate-effect in ruv3nb normalized data
+scater::plotPCA(sce.ruv3nb, ncomponents=2,
+    colour_by = "plate_number",point_alpha=0.5, point_size=1)  +  ggtitle('ruvIIInb-normalized') + facet_wrap(~sce.ruv3nb$treatment)
+```
+
+## Clustering based on Normalized Data
+We can also perform clustering based on the normalized data.
+```{r}
+snn_gr <- scran::buildSNNGraph(sce.ruv3nb, assay.type = "logcorrected",k=20)
+clusters <- igraph::cluster_louvain(snn_gr)
+ sce.ruv3nb$cluster <- factor(clusters$membership)
+# visualize clustering using PC 
+scater::plotPCA(sce.ruv3nb, ncomponents=2,
+    colour_by = "cluster",point_alpha=0.5, point_size=1) +  ggtitle('ruvIIInb-normalized')
+```
+
