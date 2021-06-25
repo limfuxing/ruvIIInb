@@ -73,7 +73,7 @@ get.res <- function(out,type='pearson',batch=NULL) {
           p <- dev <- Y
           for(i in 1:ncol(Y)) {
             p[,i]   <- runif(nrow(Y),a[,i],b[,i])
-            dev[,i] <- ZIM::dzinb(p[,i],lambda=mu.noUV[,i],k=1/out$psi.DE[,batch],omega=avg.pi0)
+            dev[,i] <- ZIM::qzinb(p[,i],lambda=mu.noUV[,i],k=1/out$psi.DE[,batch[i]],omega=avg.pi0)
           }
         }      
     }
