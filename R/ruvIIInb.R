@@ -129,6 +129,11 @@ if(use.pseudosample) {
  } # if
 }
 
+# if using pseudosamples, only NB models can be fitted
+if(use.pseudosample)
+  zeroinf <- rep(FALSE,ncol(Y))
+
+
 # get Huber's k
 k.huber<- ifelse(robust,1.345,100)
 
@@ -160,7 +165,9 @@ wt   <- matrix(1,ngene,ns)
 
 Ylist <- lapply(1:ngene,FUN=subsetMat,mat=Z.res,MARGIN=1)
 wtlist<- lapply(1:ngene,FUN=subsetMat,mat=Y+1,MARGIN=1)
+print(k)
 coef  <- drop(BiocParallel::bpmapply(FUN=get.coef.wt,y=Ylist,wt=wtlist,MoreArgs=list(W=W),BPPARAM=BPPARAM))
+print(k)
 
 # alpha(n x k) matrix
 alpha<- as.matrix(t(coef)[,-1])
