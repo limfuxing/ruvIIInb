@@ -129,6 +129,11 @@ if(use.pseudosample) {
  } # if
 }
 
+# if using pseudosamples, only NB models can be fitted
+if(use.pseudosample)
+  zeroinf <- rep(FALSE,ncol(Y))
+
+
 # get Huber's k
 k.huber<- ifelse(robust,1.345,100)
 
@@ -484,7 +489,6 @@ while(!conv) {
    halving <- 0
   }
  }
-#print(sum(loglik))
 
 conv.logl <- FALSE
 if(iter>2) {
@@ -567,29 +571,6 @@ if(conv) {
 }
 } # end of outer IRLS loop
 
-# regularize a using optimal lambda.a parameter
-#adev.list <- lapply(1:ngene,FUN=subsetMat,mat=alpha.dev,MARGIN=1)
-
-# use the initial alpha.dev to obtain optimal regularization parameter
-#lambda.a <- drop(BiocParallel::bpmapply(FUN=est.lambda.a, alpha.dev=adev.list,signdev=signdev.list,wt=wtlist,
-#		MoreArgs=list(RM_W=RM_W,k.huber=k.huber),BPPARAM=BPPARAM))
-
-#lambda.a <- ifelse(lambda.a<0,0,lambda.a)
-#print(summary(c(lambda.a)))
-#print('finished estimating lambda.a')
-
-# get alpha dev using optimal regularization parameter
-#if(any(lambda.a)>0) {
-# alpha.dev <- drop(BiocParallel::bpmapply(FUN=get.adev,RM_Z=RM_Z.list,signdev=signdev.list,wt=wtlist,lambda.a=as.list(lambda.a),
-#		MoreArgs=list(RM_W=RM_W,alpha.mean=alpha.mean,k.huber=k.huber),BPPARAM=BPPARAM)
-# if(k>1)
-#  alpha.dev <- t(alpha.dev)
-# if(k==1)
-#  alpha.dev <- as.matrix(alpha.dev)
-#}
-# get alpha
-#alpha <- sweep(alpha.dev,2,alpha.mean,'+')
-
 # calculate psi for DE (where Mb is left out of the offset)
 psi.DE <- psi
 # save raw count as sparse matrix
@@ -602,6 +583,7 @@ return( list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"M
 		"psi"=psi,'psi.DE'=psi.DE,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch) )
 }
 
+#### Helpers functions ######################################################################################
 rob.wt <- function(Y,mu,psi) {
  sign.dev <- sign(Y-mu)* sqrt(2*(dnbinom(Y,mu=Y,size=1/psi,log=TRUE) - dnbinom(Y,mu=mu,size=1/psi,log=TRUE) ))
  mad.est  <- mad(sign.dev)
