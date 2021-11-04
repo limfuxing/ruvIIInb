@@ -59,7 +59,7 @@ zero.genes <- rowSums(Y>0)==0
 if(any(zero.genes)) {
    Y <- Y[!zero.genes,]
    ctl <- ctl[!zero.genes]
-   print(paste0(sum(zero.genes), ' genes with all zero counts are removed'))
+   print(paste0(sum(zero.genes), 'genes with all zero counts are removed following a Winsorization step.'))
 }
 
 

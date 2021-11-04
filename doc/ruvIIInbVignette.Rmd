@@ -1,0 +1,815 @@
+---
+title: "Removing unwanted variation in single cell data using RUV-III-NB"
+author: Agus Salim and Alysha De Livera
+date: "`r Sys.Date()`"
+output: 
+  bookdown::html_document2:
+    toc: true 
+    toc_depth: 4  
+    number_sections: true  
+    theme: united  
+    highlight: tango  
+    fig_caption: yes
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>"
+)
+knitr::opts_chunk$set(fig.width=9, fig.height=6)
+
+```
+
+
+# Introduction 
+
+## RUV-III-NB model
+
+
+To model the raw count for gene $g$ and cell $c$, $y_{gc}$, RUV-III-NB uses a Negative Binomial (NB), $y_{gc} \sim NB(\mu_{gc},\psi_g)$ or a Zero-inflated Negative Binomial (ZINB) random variable. For simplicity, in what follows we describe the NB representation. 
+
+Let $\boldsymbol y_g=(y_{g1},y_{g2},\ldots,y_{gN})^T$ be the vector of count for gene $g$ and $\mu_g$ be the vector of mean parameters. We further assume that there are $m \mbox{<} N$ groups of cells with the same underlying biology among the $N$ cells, which we refer to as pseudo-replicates. Using a generalized linear model with log link function to model the mean parameters as a function of the unknown unwanted factors $\mathbf W$ and the underlying biology represented by the replicate matrix $\mathbf M$, we have
+
+\begin{equation}
+\log \mu_g = \boldsymbol \zeta_g + \mathbf M\beta_g + \boldsymbol W\alpha_g,
+\label{eq:NBGLM}
+\end{equation}
+
+where $\boldsymbol M (N \times m)$ is a matrix of pseudo-replicates membership with $\boldsymbol M(i,j)=1$ if the ith cell is part of the jth pseudo-replicate and 0 otherwise, $\beta_g(m \times 1) \sim N(0,\lambda_\beta I_m)$ is the vector of intercepts, with unique value for each of the $m$ replicates, $\mathbf W (N \times k)$ is the k-dimensional unknown unwanted factors and $\alpha_g (k \times 1) \sim N(\alpha_\mu,\lambda_\alpha I_k)$ is the vector of regression coefficient associated with the unwanted factors and finally $\zeta_g$ is the parameter that represents log average count for gene $g$ after correcting for unwanted factors. 
+
+
+Unwanted variation due to factors such as library size and batch effect are captured by the $W$ matrix. For example, when $K=1$ and the $W$ column is approximately equal (up to a multiplicative constant) to log library size (LS) then $\mu_g = (LS)_g^{\alpha_g}$, thus allowing a possibly non-linear, gene-specific relationship between library size and raw count.
+
+To estimate the unknown unwanted factors and the regression coefficients, we use iterative reiweighted least squares (IRLS) algorithm that takes advantage of negative control genes (genes where $\beta_g \approx 0$) and sets of replicates (i.e., a collection of cells where the gene expression variation across the cells is solely due to the unwanted factors).
+
+
+## RUV-III-NB adjusted data
+
+Once the unwanted factors are estimated, their effects are removed from the data, and subsequent downstream analyses such as clustering, trajectory and differential expression analyses are performed on the corrected data. Here we demonstrate the use of RUV-III-NB adjusted data, that is the log percentile-invariant adjusted count (PAC), for downstream analyses such as clustering and differential analysis.
+
+
+
+# Example Datasets
+
+
+
+### Non-Small Cell Lung Cancer Cells (NSCLC) Dataset
+
+The Non-Small Cell Lung Cancer Cells (NSCLC) dataset is freely available from 10X Genomics website (www.10xgenomics.com). In this study, the cells have been sequenced in a single batch, however the sizes of the cells vary considerably. For example, epithelial cells are larger in size and immune cells such as T cells are smaller in size. Here we will see that the library size is correlated with cell size, and this needs to be taken into account in normalising the data. The input data format and the preliminary analyses will be demonstrated using this dataset.
+
+### Celline Dataset
+
+In the Celline dataset, cells have been sequenced in three separate batches using 10X technology. The cell-types are known in this study, however, this known cell type factor is correlated with the batch variable. For example, one batch only contains Jurkat cell line, another batch contains only 293T cell line and the third batch contains a 50-50 mixture of both cell lines. In removing unwanted variation, this confounding needs to be taken into account. 
+
+
+# Installing the required packages
+
+RUV-III-NB package can be installed from github as shown below. 
+
+```{r, include=FALSE, resuls='hide', warning=FALSE, message=FALSE}
+rm(list=ls())
+```
+
+
+```{r, include=TRUE, resuls='hide', warning=FALSE, message=FALSE,eval=FALSE}
+#Install ruvIIInb package
+devtools::install_github("limfuxing/ruvIIInb")
+
+
+```
+
+```{r, include=TRUE, resuls='hide', warning=FALSE, message=FALSE}
+library(ruvIIInb)
+```
+
+Several other packages are required for pre-processing, visualising and the downstream analyses, and these are also shown in the following code.
+
+```{r, include=TRUE, resuls='hide', warning=FALSE, message=FALSE}
+
+library(SingleCellExperiment)
+library(scater)
+library(scran)
+library(scuttle)
+library(edgeR)
+library(SingleR)
+library(celldex)
+library(hrbrthemes)
+library(tidyverse)
+library(ggplot2)
+library(uwot)
+library(scMerge)
+library(Seurat)
+library(randomcoloR)
+library(dittoSeq)
+library(pheatmap)
+
+
+```
+
+
+
+# Input data format
+
+For the input data format, we recommend first creating a `SingleCellExperiment` object that contains the raw data. 
+
+
+```{r, results='hide',warning=FALSE}
+nsclc_obs<-readRDS(system.file("extdata", "nsclc_obs.rds", package="ruvIIInb"))
+nsclc_samples<-readRDS(system.file("extdata", "nsclc_samples.rds", package="ruvIIInb"))
+```
+
+The NSCLC dataset consists of the following: (i) A count data matrix `nsclc_obs` with `r dim(nsclc_obs)[1]` genes in rows and `r dim(nsclc_obs)[2]` cells in columns, and (ii) A data frame that describes the samples which consists of the total number of counts for the cell (`lib.size`) and barcode (`Barcode`) for each cell in this study.
+
+```{r}
+sce <- SingleCellExperiment(assays=list(counts=nsclc_obs),
+                            colData=as.data.frame(nsclc_samples))
+
+```
+
+
+# Preprocessing steps 
+
+
+Several quality control (QC) steps then need to be carried out on the data, and these can be computed using an external R package such as `scuttle`.
+
+## Computing cell-level quality control metrics
+ 
+The cell-level quality control metrics such as the number of genes that has counts above zero and the percentage of counts that comes from Mitochondrial genes for each cell can be computed and added to the `SingleCellExperiment` object as follows:
+
+
+
+```{r}
+sce <- addPerCellQCMetrics(x = sce,subsets=list(Mito=grep("MT-",rownames(sce))))
+```
+
+
+
+The metrics calculated above may then be used to identify potential outliers. We recommend visualising the distribution of cells which contain a high proportion of cell-level counts for Mitochondrial genes as well as those which have low cell-level total counts, that are certain median absolute deviations (MADs) away from the median value.  
+
+
+```{r,warning=FALSE}
+libsize_drop <- isOutlier(
+  metric = sce$total, 
+  nmads = 2,
+  type = "lower", 
+  log = TRUE)
+colData(sce)$libsize_drop<-libsize_drop
+
+
+mito_drop <- isOutlier(
+  metric = colData(sce)$subsets_Mito_percent, 
+  nmads = 3, 
+  type = "higher")
+colData(sce)$mito_drop<-mito_drop
+```
+
+Figures \@ref(fig:LibsizeFig) and \@ref(fig:MitoFig) visualise the distribution of cells that are flagged this way. 
+
+
+```{r LibsizeFig, fig.cap='A histogram showing the distribution of log cell-wise total counts flagging those with low library size', echo=FALSE,warning=FALSE}
+plot_df <- data.frame(logtotal=log(sce$total), 
+                      libsize_drop=factor(libsize_drop),
+                      mito_drop=factor(mito_drop),
+                      logdetected=log(sce$detected))
+plot_df$mito_drop<-relevel(plot_df$mito_drop, "TRUE")
+plot_df$libsize_drop<-relevel(plot_df$libsize_drop, "TRUE")
+
+#A histogram showing the distribution of flagged cells
+p <- plot_df %>%
+  ggplot( aes(x=logtotal, fill=libsize_drop)) +
+  geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity',bins=30) +
+  scale_fill_manual(values=c( "#69b3a2","#404080")) +
+  theme_ipsum() +
+  labs(fill="") +xlab("Cell-level log total count")+ylab("Frequency")
+p+ggtitle('The distribution of cell-level log total counts\n  flagging cells with low library size')
+
+```
+
+
+```{r MitoFig, fig.cap='A scatterplot showing cell-level log number of detected genes against log total count', echo=FALSE, warning=FALSE}
+
+#A plot showing the number of detected genes vs total cell count
+p2<- plot_df %>%
+  arrange(desc(mito_drop)) %>%
+  ggplot( aes(x=logtotal,y=logdetected, fill=mito_drop)) +
+  geom_point(
+  mapping = aes(colour = mito_drop, shape = libsize_drop),
+size = 2,alpha = 5 / 6) + scale_color_manual(values=c("#69b3a2","#404080"))+
+  xlab("Log total cell-level count")+ylab("Log number of cell-level detected genes")
+p2+ggtitle('The cell-level number of detected genes vs total cell-level count (on log scale)')
+
+```
+
+
+## Computing gene-level quality control metrics
+
+
+Similarly, we recommend computing gene-level quality control metrics such as the mean count across all cells for each gene, and the percentage of cells with non-zero counts for each gene. The code below adds these measures to the `SingleCellExperiment` object and flags genes with a low mean cell count.
+
+
+
+```{r}
+sce <- addPerFeatureQCMetrics(x = sce)
+
+#Remove genes with zero counts for each gene
+sce<-sce[-which(rowData(sce)$mean==0),]
+
+lowcount_drop <- isOutlier(
+  metric = rowData(sce)$mean,
+  nmads = 1.5, 
+  type = "lower", 
+  log = TRUE)
+
+```
+
+
+```{r LowCellCountFig, fig.cap='A histogram showing the distribution of\n gene-wise log mean count', echo=FALSE,warning=FALSE}
+#mean count of genes across all cells
+plot_df2 <- data.frame(mean_genecount=log(rowData(sce)$mean), lowcount_drop=factor(lowcount_drop))
+p <- plot_df2 %>%
+  arrange(desc(lowcount_drop)) %>%
+  ggplot( aes(x=mean_genecount, fill=lowcount_drop)) +
+  geom_histogram( color="#e9ecef", alpha=0.6, position = 'identity',bins=50) +
+  scale_fill_manual(values=c("#404080", "#69b3a2")) +
+  theme_ipsum() +
+  labs(fill="") +xlab("Log mean count across all cells")+ylab("Frequency")
+p+ggtitle('The distribution of log mean count across all cells,\n flagging those with low count')
+
+
+```
+
+
+Once the computed quality control metrics have been explored, the code below retains only the selected genes and cells.
+
+```{r}
+sce <- sce[!(lowcount_drop), !(libsize_drop | mito_drop)]
+```
+
+
+Following quality control, the count data matrix consists of `r dim(sce)[1]` genes in rows and `r dim(sce)[2]` cells in columns. 
+
+
+## Optionally using only Highly-Variable Genes(HVG)
+
+If the computational resources are limited, the analyses may be continued using only highly-variable genes (HVGs). HVGs are defined as genes with large variance compared to genes with the same mean expression levels, accounting for the fact that the variation in scRNA-seq data is related to the mean expression. The code below demonstrates the identification of HVGs. In contrast to the analyses presented in the paper, \textit{for demonstration purposes only}, we retain only the HVGs as shown in Figure \@ref(fig:VarMeanFig). 
+
+
+
+
+
+```{r,warning=FALSE,message=FALSE}
+sce <- computeSumFactors(sce,assay.type="counts")
+data_norm_pre <- sweep(assays(sce)$counts,2,sce$sizeFactor,'/')
+assays(sce, withDimnames=FALSE)$lognormcounts<- log(data_norm_pre+1)
+```
+
+
+
+```{r,warning=FALSE,message=FALSE}
+hvg_df <- modelGeneVar(sce, assay.type = "lognormcounts")
+hvg_df<- hvg_df[rownames(sce),]
+hvg_genes   <- hvg_df$bio>quantile(hvg_df$bio,prob=0.75)
+rowData(sce)$hvg_genes<-hvg_genes
+sce<-sce[hvg_genes,]
+```
+
+
+
+```{r VarMeanFig, fig.cap='Gene-level variance vs Mean log-expression', echo=FALSE,warning=FALSE}
+plot(hvg_df$mean, hvg_df$total,
+     xlab="Mean log-expression", 
+     ylab="Variance",pch=16,col="grey", main="Gene-level variance vs mean log-expression\n with the HVGs shown in red")
+curve(metadata(hvg_df)$trend(x), col="blue", add=TRUE)
+points(hvg_df$mean[hvg_genes], hvg_df$total[hvg_genes],col="red",pch=16)
+```
+
+
+# Examples
+
+
+## Example I: NSCLC data
+
+Following the preliminary steps described above, the pre-processed NSCLC dataset consists `r dim(sce)[1]` genes in rows and `r dim(sce)[2]` cells in columns. We use this data matrix to demonstrate the application of RUV-III-NB to this dataset.
+
+### Normalisng the data using RUV-III-NB
+
+#### Identification of negative control genes
+
+
+Instead of assuming that the components of unwanted variation in the data are observed, these are estimated from the data using a set of *negative control* genes. The variation in these negative control genes mostly consists of the underlying unwanted variation. In this application, we use the single-cell housekeeping genes described by Lin et al., 2019 as negative control genes. 
+
+
+
+```{r,message=FALSE}
+# Reading in the control genes
+data(Hs.schk)
+ctl <- as.character(Hs.schk)
+```
+
+
+```{r LSFig, fig.cap='Comparing the overall log library size vs the log library size using the control genes', warning=FALSE}
+#compare overall log Library sizes vs log library sizes using control genes only
+sce$logLS <- log(colSums(assays(sce)$counts))
+rowData(sce)$ctlLogical<-rownames(assays(sce)$counts) %in% ctl
+sce$logLS_ctl <- log(colSums(assays(sce)$counts[rowData(sce)$ctlLogical,]))
+
+plot(sce$logLS,sce$logLS_ctl,col="grey",
+     xlab="Log library size using all genes",
+     ylab="Log library size using the control genes")
+```
+
+
+#### Identification of pseudo-replicates
+
+
+As the NSCLC dataset only consists of a single batch, initial clustering is used to identify a set of homogeneous cells following scran normalisation. Cells which belong to the same initial cluster are then considered as pseudo-replicates. The code for doing this is shown below.
+
+
+
+
+```{r,message=FALSE,warning=FALSE}
+
+# Perform initial clustering to identify pseudo-replicates
+snn_gr_init <- buildSNNGraph(sce, assay.type = "lognormcounts")
+clusters_init <- igraph::cluster_louvain(snn_gr_init)
+sce$cluster_init <- factor(clusters_init$membership)
+
+# Identify cell-type for each cluster
+ref_se <- HumanPrimaryCellAtlasData()
+
+# Annotate initial cluster
+pred10xnsclc_init  <- SingleR(test = sce, ref = ref_se, 
+                              labels = ref_se$label.fine,
+                              assay.type.test='lognormcounts',
+                              clusters=factor(sce$cluster_init))
+sce$ctype_init <- pred10xnsclc_init$labels[sce$cluster_init]
+
+# Anotate cells
+pred10xnsclc_init2  <- SingleR(test = sce, ref = ref_se, 
+                              labels=ref_se$label.fine,
+                              assay.type.test='lognormcounts')
+sce$ctype_init2 <- pred10xnsclc_init2$labels
+
+
+sce <- runUMAP(sce,exprs_values = "lognormcounts")
+sce <- runPCA(sce,exprs_values = "lognormcounts")
+
+
+```
+
+
+Figure \@ref(fig:ClFig) visualises the initial clusters for identifying pseudo-replicates. The UMAP plots show that the cell type is correlated with the library size.
+
+
+```{r ClFig, fig.cap='Visualising the initial clusters for identifying pseudo-replicates', echo=FALSE,warning=FALSE}
+p1 <- plotUMAP(sce,colour_by='logLS')
+p3 <- dittoDimPlot(sce, "ctype_init",colors=c(1,2,3,4,5,6,7,8))
+gridExtra::grid.arrange(p1,p3,ncol=2)
+
+```
+
+
+RUV-III-NB can be run with or without the use of pseudo-cells as we demonstrate here.
+
+#### Running RUV-III-NB without pseudo-cells
+
+The code shown below performs RUV-III-NB normalisation without the use of pseudo-cells. 
+
+```{r,message=FALSE,eval=FALSE}
+# Construct the replicate matrix M using pseudo-replicates identified using initial clustering
+M <- matrix(0,ncol(assays(sce)$counts),length(unique(sce$cluster_init)))
+cl<- sort(unique(as.numeric(unique(sce$cluster_init))))
+for(CL in cl) 
+  M[which(as.numeric(sce$cluster_init)==CL),CL] <- 1
+
+#RUV-III-NB code
+ruv3nb_out<-ruvIII.nb(Y=as.matrix(assays(sce)$counts), # count matrix with genes as rows and cells as columns
+                    M=M, #Replicate matrix constructed as above
+                    ctl=rowData(sce)$ctlLogical, #A vector denoting control genes
+                    k=2, # dimension of unwanted variation factors
+                    strata=sce$cluster_init)
+
+```
+
+
+#### Running RUV-III-NB with pseudo-cells
+
+In the above, the pseudo-replicates were identified through the use of initial clustering. As an optional step, we can strengthen the pseudo-replicates identified from this initial clustering using the pool and divide strategy. Note that we need to specify `strata`, so that the cells which belong to different `strata` (in this case, initial clusters we have identified) are not pooled together.
+
+
+
+```{r,message=FALSE,eval=FALSE}
+
+ruv3nb_out_ps<-ruvIII.nb(Y=as.matrix(assays(sce)$counts), 
+                    M=diag(dim(sce)[2]),
+                    ctl=rowData(sce)$ctlLogical,
+                    k=2, 
+                    use.pseudosample=TRUE, #Indicating whether pseudo-cells are to be used to to define pseudo-replicates
+                    batch=rep(1,dim(sce)[2]),# NSCLC data comes from a single batch 
+                    strata=sce$cluster_init #The cells which belong to initial clusters are not pooled together
+                    )
+```
+
+
+### Downstream analyses and assessing the normalisation
+
+
+```{r,message=FALSE,include=FALSE}
+ruv3nb_out<-readRDS(system.file("extdata", "NSCLC_ruvIIInb_K2_clM.rds", package="ruvIIInb"))
+```
+
+
+
+After carrying out the RUV-III-NB normalisation using the `ruvIII.nb` function, we can explore the estimated unwanted variation component which can be obtained using `ruv3nb_out$W`. In this example, we can see that the first component of unwanted variation is highly correlated with the log library size.
+
+```{r WFig, fig.cap='Scatterplots showing the log library size vs components of unwanted variation', echo=FALSE,warning=FALSE}
+W1data<-data.frame(W1=ruv3nb_out$W[,1],
+                   W2=ruv3nb_out$W[,2],LogLS=colData(sce)$logLS)
+p1<-ggplot(W1data, aes(x=LogLS, y=W1, color=LogLS)) + geom_point()+ theme(legend.position = "none") 
+p2<-ggplot(W1data, aes(x=W2, y=W1, color=LogLS)) + geom_point()
+gridExtra::grid.arrange(p1,p2,ncol=2)
+```
+
+
+
+For downstream analyses, we recommend creating a `SingleCellExperiment` object. This `SingleCellExperiment` object contains the normalised data in the \texttt{pearson} and \texttt{logcorrected} components of the \texttt{assay} slot. 
+
+
+
+```{r,message=FALSE}
+#Creating a SingleCellExperiment object
+sce_ruv3nb <- makeSCE(ruv3nb_out,cData=colData(sce))
+```
+
+
+For seamless integration with the `Seurat` R package, the `SingleCellExperiment` object from above can be converted to a `Seurat` object using the code below and the functions in the `Seurat` package can then be used. 
+
+```{r,message=FALSE,warning=FALSE}
+seurat_ruv3nb <- as.Seurat(sce_ruv3nb, counts = "counts", data ="logcorrected")
+```
+
+
+
+Once created, the SCE object can be used for downstream analyses such as dimensional reduction, clustering and differential expression analysis.
+
+
+
+
+#### Clustering
+
+
+
+
+We now demonstrate performing principal components analysis on cells based on the Log of percentile-invariant adjusted count.
+
+
+
+```{r}
+# PCA of RUV-III-NB normalized data 
+sce_ruv3nb <- runPCA(sce_ruv3nb, exprs_values = "logcorrected")
+
+```
+
+
+
+```{r PCARUVFig, fig.cap='Visualising PCA following RUV-III-NB normalisation', echo=FALSE,warning=FALSE}
+# PCA visualization
+p1 <- plotPCA(sce, ncomponents=2,colour_by = "logLS",point_alpha=0.5, point_size=1) + ggtitle('Scran normalized')+ theme(legend.position = "none") 
+
+p2 <- plotPCA(sce_ruv3nb, ncomponents=2,
+    colour_by = "logLS",point_alpha=0.5, point_size=1) +  ggtitle('RUV-III-NB normalized')
+
+gridExtra::grid.arrange(p1,p2,ncol=2)
+
+```
+
+
+
+
+#### Annotation
+
+
+
+The codes for performing cell-type identification, annotating clusters and cells, and visualising are shown below:
+
+
+
+```{r,message=FALSE,warning=FALSE}
+
+# Perform clustering
+snn_gr <- buildSNNGraph(sce_ruv3nb, assay.type = "logcorrected")
+clusters <- igraph::cluster_louvain(snn_gr)
+sce_ruv3nb$cluster_ruv <- factor(clusters$membership)
+
+# Identify cell-type for each cluster
+ref_se <- HumanPrimaryCellAtlasData()
+
+# annotate cluster
+pred10xnsclc_ruv  <- SingleR(test = sce_ruv3nb, ref = ref_se, 
+                             labels = ref_se$label.fine,
+                             assay.type.test='logcorrected',
+                             clusters=factor(sce_ruv3nb$cluster_ruv))
+sce_ruv3nb$ctype_ruv <- pred10xnsclc_ruv$labels[sce_ruv3nb$cluster_ruv]
+
+# anotate cells
+pred10xnsclc_ruv2  <- SingleR(test = sce_ruv3nb, ref = ref_se, 
+                              labels=ref_se$label.fine,
+                              assay.type.test='logcorrected')
+sce_ruv3nb$ctype_ruv2 <- pred10xnsclc_ruv2$labels
+
+#UMAP
+sce_ruv3nb <- runUMAP(sce_ruv3nb, exprs_values = "logcorrected")
+```
+
+
+
+
+
+```{r ClRUVFig, fig.cap='Visualising the clusters following RUV-III-NB normalisation', echo=FALSE,warning=FALSE}
+p1 <- plotUMAP(sce_ruv3nb,colour_by='logLS')+ggtitle('RUV-III-NB normalized')
+p3<-dittoDimPlot(sce_ruv3nb, "ctype_ruv",colors=c(1,3,4,10,5,9, 6,11,7))
+p1s <- plotUMAP(sce,colour_by='logLS')+ggtitle('Scran normalized')
+p3s<-dittoDimPlot(sce, "ctype_init",colors=c(1,2,3,4,5,6,7,8))
+gridExtra::grid.arrange(p1s,p1,p3s,p3,ncol=2)
+
+```
+
+#### Identification of differentially expressed 
+
+Differentially expressed (DE) genes can be identified using an external package such as `scran`. The `findMarkers` function in `scran` identifies a combination of genes that defines one cluster against the rest by performing pairwise comparisons. The code below demonstrates the identification of top DE genes for a specified cluster using RUV-III-NB corrected data and visualising the log fold-changes in Figure \@ref(fig:heatmapRUVFig). 
+
+
+```{r,message=FALSE,warnings=TRUE}
+markers_ruv3nb <- findMarkers(x=as.matrix(assays(sce_ruv3nb)$logcorrected),
+                              groups=sce_ruv3nb$ctype_ruv)#identify a combination of marker genes that together defines one cluster against the rest. 
+cluster3_markers <- markers_ruv3nb[[3]] #Cluster 3 ("CMP" cell-type) is used here for demonstration purposes.
+cluster3_top5 <- cluster3_markers[cluster3_markers $Top <= 5,] #Collects the top DE genes from each pairwise comparison involving cluster 3 
+logFCs_cluster3_top5 <- getMarkerEffects(cluster3_top5) #Extracts log fold changes
+```
+
+
+```{r heatmapRUVFig, fig.cap='A heatmap of the DE log fold changes', echo=FALSE,warning=FALSE}
+pheatmap(logFCs_cluster3_top5, breaks=seq(-5, 5, length.out=101))
+
+```
+
+## Example II: Celline data, use known celltype to define pseudo-replicates
+
+
+
+
+```{r,include=TRUE}
+rm(list=ls())
+sce_celline<-readRDS(system.file("extdata", "celline_preprocessed.rds", package="ruvIIInb"))
+
+#new.labels is misspelt
+names_celline<-names(colData(sce_celline))
+names(colData(sce_celline))[which(names_celline=="new.lables")]<-"new.labels"
+names(colData(sce_celline))
+
+celline_obs<-as.matrix(assays(sce_celline)$counts)
+celline_samples<-colData(sce_celline)
+celline_rows<-rowData(sce_celline)
+
+```
+
+
+The Celline dataset consists of the following: (i) A count data matrix `celline_obs` which consists of `r dim(sce_celline)[1]` genes in rows and `r dim(sce_celline)[2]` cells in columns, and (ii) A data frame that describes the cells consisting of details such as the batch (`batch`) and the cell type (`new.labels`). The output following quality control is used above to demonstrate the concepts.
+
+
+
+```{r}
+sce_celline <- SingleCellExperiment(assays=list(counts=celline_obs),
+                            colData=as.data.frame(celline_samples),
+                            rowData=as.data.frame(celline_rows))
+
+```
+
+
+
+### Normalisng the data using RUV-III-NB
+
+As the cell types are known for this example, the replicate matrix M is constructed using the known cell-types.
+
+```{r,message=FALSE,eval=FALSE}
+
+# Construct the replicate matrix M using the known cell-types
+unique_ctype<- unique(sce_celline$new.labels)
+M <- matrix(0,ncol(assays(sce_celline)$counts),length(unique_ctype))
+dim(M)
+for(i in 1:length(unique_ctype))
+ M[sce_celline$new.labels==unique_ctype[i],i] <- 1
+
+#Read-in the control genes
+data(Hs.schk)
+ctl <- as.character(Hs.schk)
+ctl <- rownames(assays(sce_celline)$counts) %in% ctl
+
+#RUV-III-NB code
+ruv3nb_out_celline<-ruvIII.nb(Y=as.matrix(assays(sce_celline)$counts),
+                           M=M,
+                           ctl=ctl,
+                           k=2,
+                           ncores = 6)
+
+```
+
+
+```{r,message=FALSE,include=FALSE}
+#Loading the pre-saved RUV-III-NB sce output 
+ruv3nb_out_celline<-readRDS(system.file("extdata", "celline_ruvIIInb_K2.rds", package="ruvIIInb"))
+```
+
+
+```{r,message=FALSE,warning=FALSE}
+
+#Creating a SingleCellExperiment object
+sce_ruv3nb_celline <- makeSCE(ruv3nb_out_celline,cData=colData(sce_celline))
+
+#Converting to a Seurat object if necessary
+seurat_ruv3nb_celline <- as.Seurat(sce_ruv3nb_celline, counts = "counts", data ="logcorrected")
+
+```
+
+
+
+### Downstream analyses and assessing the normalisation
+
+We can now explore the unwanted variation component. Here we see that the unwanted variation components capture the unwanted library size and batch variations.
+
+
+```{r WFig2, fig.cap='Scatterplots showing batch, log library size vs the components of unwanted variation', echo=FALSE,warning=FALSE}
+Wdata_celline<-data.frame(W1=ruv3nb_out_celline$W[,1],
+                   W2=ruv3nb_out_celline$W[,2],
+                   batch=colData(sce_celline)$batch,
+                   LogLS=log(colSums(assays(sce_celline)$counts)))
+p1<-ggplot(Wdata_celline, aes(x=LogLS, y=W1, color=batch)) + geom_point()+ theme(legend.position = "none") 
+p2<-ggplot(Wdata_celline, aes(x=W2, y=W1, color=batch)) + geom_point()
+gridExtra::grid.arrange(p1,p2,ncol=2)
+```
+
+#### Clustering
+
+We now demonstrate performing clustering on the RUV-III-NB normalised data.
+
+
+```{r}
+# PCA and UMAP of RUV-III-NB normalized data 
+sce_ruv3nb_celline <- runPCA(sce_ruv3nb_celline, exprs_values = "logcorrected")
+sce_ruv3nb_celline <- runUMAP(sce_ruv3nb_celline, exprs_values = "logcorrected")
+```
+
+
+
+```{r} 
+# PCA and UMAP of Scran normalized data 
+sce_celline <- computeSumFactors(sce_celline,assay.type="counts")
+data_norm_celline_pre <- sweep(assays(sce_celline)$counts,2,sce_celline$sizeFactor,'/')
+assays(sce_celline, withDimnames=FALSE)$lognormcounts<- log(data_norm_celline_pre+1)
+sce_celline <- runPCA(sce_celline,exprs_values = "lognormcounts")
+sce_celline <- runUMAP(sce_celline,exprs_values = "lognormcounts")
+```
+
+
+`
+
+
+```{r PCARUVFigcelline, fig.cap='Visualising PCA following RUV-III-NB normalisation of the Celline data', echo=FALSE,warning=FALSE}
+
+# PCA visualization
+p1 <- plotPCA(sce_celline, ncomponents=2,colour_by = "new.labels",point_alpha=0.5, point_size=1) + ggtitle('Scran normalized')
+
+p2 <- plotPCA(sce_ruv3nb_celline, ncomponents=2,
+              colour_by = "new.labels",point_alpha=0.5, point_size=1) +  ggtitle('RUV-III-NB normalized')
+
+gridExtra::grid.arrange(p1,p2,ncol=2)
+
+```
+
+
+```{r ClRUVFigcelline, fig.cap='Visualising the clusters following RUV-III-NB normalisation of the Celline data', echo=FALSE,warning=FALSE}
+
+p1 <- plotUMAP(sce_ruv3nb_celline,colour_by='new.labels')+ggtitle('RUV-III-NB normalized')
+p3 <- plotUMAP(sce_ruv3nb_celline,colour_by='batch')+ggtitle('RUV-III-NB normalized')
+p1s <- plotUMAP(sce_celline,colour_by='new.labels')+ggtitle('Scran normalized')
+p3s <- plotUMAP(sce_celline,colour_by='batch')+ggtitle('Scran normalized')
+
+
+gridExtra::grid.arrange(p1s,p1,p3s,p3,ncol=2)
+
+
+```
+
+
+
+#### Identification of differentially expressed 
+
+The code below demonstrates the identification of top DE genes for a cell type 293t using RUV-III-NB corrected data and visualising the log fold-change.
+
+
+
+```{r,message=FALSE,warnings=TRUE}
+markers_ruv3nb_celline <- findMarkers(x=as.matrix(assays(sce_ruv3nb_celline)$logcorrected),
+                              groups=sce_ruv3nb_celline$new.labels)
+markers_celline293t <- markers_ruv3nb_celline[["293t"]]
+top5_celline293t <- markers_celline293t[markers_celline293t$Top <= 5,]
+top5_celline293t
+```
+
+
+
+## Example III: Celline data, use scReplicate to define pseudoreps
+
+### Normalisng the data using RUV-III-NB
+
+In the absence of known cell types, RUV-III-nb could be used by defining the replicate matrix M using the `scReplicate` algorithm described by in the `scMerge` package. In this Section, we demonstrate how this can be implimented using Celline dataset treating cell-type as unknown.
+
+
+```{r,message=FALSE,eval=FALSE}
+# Construct the replicate matrix M using the `scReplicate` algorithm
+sce_celline <- computeSumFactors(sce_celline,assay.type="counts")
+data_norm_pre <- sweep(assays(sce_celline)$counts,2,sce_celline$sizeFactor,'/')
+assays(sce_celline, withDimnames=FALSE)$lognormcounts<- log(data_norm_pre+1)
+scm.M<-scReplicate(sce_combine=sce_celline,
+                   exprs = "lognormcounts",
+                   batch=as.numeric(factor(sce_celline$batch)),
+                   kmeansK=c(1,1,2))
+mode(scm.M) <- 'logical'
+
+
+ruv3nb_out_celline_scMerge<- ruvIIInb::ruvIII.nb(as.matrix(assays(sce_celline)$counts),
+                            M=scm.M,
+                            ctl=ctl,
+                            k=2, 
+                            ncores = 6)
+```
+
+
+### Downstream analyses and assessing the normalisation
+
+
+
+```{r,message=FALSE,include=FALSE}
+ruv3nb_out_celline_scMerge<- readRDS(system.file("extdata", "celline_ruvIIInb_scMerge_K2.rds", package="ruvIIInb"))
+```
+
+
+
+```{r,message=FALSE}
+#Creating a SingleCellExperiment object
+sce_ruv3nb_celline_scMerge <- makeSCE(ruv3nb_out_celline_scMerge,
+                                         cData=colData(sce_celline))
+
+#Converting to a Seurat object if necessary
+seurat_ruv3nb_celline_scMerge <- as.Seurat(sce_ruv3nb_celline_scMerge, counts = "counts", data ="logcorrected")
+
+
+```
+
+#### Clustering
+
+
+
+
+
+```{r}
+
+# PCA and UMAP of RUV-III-NB normalized data 
+sce_ruv3nb_celline_scMerge <- runPCA(sce_ruv3nb_celline_scMerge, 
+                                     exprs_values = "logcorrected")
+sce_ruv3nb_celline_scMerge <- runUMAP(sce_ruv3nb_celline_scMerge, 
+                                      exprs_values = "logcorrected")
+```
+
+
+
+```{r scMergeClRUVFigcelline, fig.cap='Visualising the clusters following RUV-III-NB normalisation of the Celline data using scReplicate', echo=FALSE,warning=FALSE}
+
+p1 <- plotUMAP(sce_ruv3nb_celline_scMerge,colour_by='new.labels')+ggtitle('RUV-III-NB normalized')
+p3 <- plotUMAP(sce_ruv3nb_celline_scMerge,colour_by='batch')+ggtitle('RUV-III-NB normalized')
+p1s <- plotUMAP(sce_celline,colour_by='new.labels')+ggtitle('Scran normalized')
+p3s <- plotUMAP(sce_celline,colour_by='batch')+ggtitle('Scran normalized')
+
+
+gridExtra::grid.arrange(p1s,p1,p3s,p3,ncol=2)
+
+```
+
+#### Identification of differentially expressed 
+
+
+```{r,message=FALSE,warning=FALSE}
+markers_ruv3nb_celline_scMerge <- findMarkers(x=as.matrix(assays(sce_ruv3nb_celline_scMerge)$logcorrected),
+                                      groups=sce_ruv3nb_celline_scMerge$new.labels)
+markers_celline293t_scMerge <- markers_ruv3nb_celline_scMerge[["293t"]]
+top5_celline293t_scMerge <- markers_celline293t_scMerge[markers_celline293t_scMerge$Top <= 5,]
+top5_celline293t_scMerge
+```
+
+# Session Information
+
+```{r}
+sessionInfo()
+```

@@ -1,6 +1,6 @@
 ---
 title: "Removing unwanted variation in single cell data using RUV-III-NB"
-author: 
+author: Agus Salim and Alysha De Livera
 date: "`r Sys.Date()`"
 output: 
   bookdown::html_document2:
@@ -12,12 +12,7 @@ output:
     fig_caption: yes
 ---
 
-<!--
-%\VignetteEngine{knitr::rmarkdown}
-%\VignetteIndexEntry{Supplementary Materials}
-%\VignetteEncoding{UTF-8}
--->
-  
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(
   collapse = TRUE,
@@ -80,9 +75,13 @@ rm(list=ls())
 
 ```{r, include=TRUE, resuls='hide', warning=FALSE, message=FALSE,eval=FALSE}
 #Install ruvIIInb package
-devtools::install_github("limfuxing/ruvIIInb",build_vignettes = TRUE)
-library(ruvIIInb)
+devtools::install_github("limfuxing/ruvIIInb")
 
+
+```
+
+```{r, include=TRUE, resuls='hide', warning=FALSE, message=FALSE}
+library(ruvIIInb)
 ```
 
 Several other packages are required for pre-processing, visualising and the downstream analyses, and these are also shown in the following code.
@@ -104,6 +103,7 @@ library(scMerge)
 library(Seurat)
 library(randomcoloR)
 library(dittoSeq)
+library(pheatmap)
 
 
 ```
@@ -115,44 +115,9 @@ library(dittoSeq)
 For the input data format, we recommend first creating a `SingleCellExperiment` object that contains the raw data. 
 
 
-```{r, include=FALSE, echo=FALSE,results='hide',warning=FALSE,eval=FALSE}
-
-###########################################################
-# read the data
-data <- edgeR::read10X(path='/stornext/Home/data/allstaff/d/delivera.a/NSCLC_ADL_wehi/filtered_gene_bc_matrices')
-dim(data)
-
-###########################################################
-# change gene names from ENSEMBL to SYMBOL
-genenames <- unlist(data$genes)
-head(genenames)
-length(genenames)
-dim(data$counts)
-#Only keeping non-duplicated genes
-data$counts <- data$counts[!duplicated(genenames),]
-genenames <- genenames[!duplicated(genenames)]
-names(genenames) <- NULL
-# create SCE object
-nsclc_obs <- data$counts
-dim(nsclc_obs)
-rownames(nsclc_obs) <- genenames
-nsclc_samples<-data$samples
-head(nsclc_samples)
-
-dim(nsclc_samples)
-nsclc_samples<-nsclc_samples[,c("lib.size","Barcode")]
-head(nsclc_samples)
-
-saveRDS(nsclc_obs,'nsclc_obs.rds')
-saveRDS(nsclc_samples,'nsclc_samples.rds')
-
-```
-
-
-```{r, include=FALSE, echo=FALSE, results='hide',warning=FALSE}
-nsclc_obs<-readRDS('../inst/extdata/nsclc_obs.rds')
-nsclc_samples<-readRDS('../inst/extdata/nsclc_samples.rds')
-
+```{r, results='hide',warning=FALSE}
+nsclc_obs<-readRDS(system.file("extdata", "nsclc_obs.rds", package="ruvIIInb"))
+nsclc_samples<-readRDS(system.file("extdata", "nsclc_samples.rds", package="ruvIIInb"))
 ```
 
 The NSCLC dataset consists of the following: (i) A count data matrix `nsclc_obs` with `r dim(nsclc_obs)[1]` genes in rows and `r dim(nsclc_obs)[2]` cells in columns, and (ii) A data frame that describes the samples which consists of the total number of counts for the cell (`lib.size`) and barcode (`Barcode`) for each cell in this study.
@@ -291,21 +256,15 @@ Following quality control, the count data matrix consists of `r dim(sce)[1]` gen
 If the computational resources are limited, the analyses may be continued using only highly-variable genes (HVGs). HVGs are defined as genes with large variance compared to genes with the same mean expression levels, accounting for the fact that the variation in scRNA-seq data is related to the mean expression. The code below demonstrates the identification of HVGs. In contrast to the analyses presented in the paper, \textit{for demonstration purposes only}, we retain only the HVGs as shown in Figure \@ref(fig:VarMeanFig). 
 
 
-```{r,warning=FALSE,message=FALSE,include=FALSE}
-sce<-readRDS('../inst/extdata/NSCLC_pre_27_09_2021.rds') 
-```
 
 
-```{r,warning=FALSE,message=FALSE,eval=FALSE}
+
+```{r,warning=FALSE,message=FALSE}
 sce <- computeSumFactors(sce,assay.type="counts")
 data_norm_pre <- sweep(assays(sce)$counts,2,sce$sizeFactor,'/')
 assays(sce, withDimnames=FALSE)$lognormcounts<- log(data_norm_pre+1)
 ```
 
-```{r,message=FALSE,warning=FALSE,, include=FALSE, eval=FALSE}
-#Saving the pre-NSCLC data file as computeSumFactors() takes a long time
-#saveRDS(sce,file='NSCLC_pre_27_09_2021.rds')
-```
 
 
 ```{r,warning=FALSE,message=FALSE}
@@ -339,17 +298,18 @@ Following the preliminary steps described above, the pre-processed NSCLC dataset
 #### Identification of negative control genes
 
 
-Instead of assuming that the components of unwanted variation in the data are observed, these are estimated from the data using a set of *negative control* genes. The variation in these negative control genes mostly consists of the underlying unwanted variation. In this application, we use the single-cell housekeeping genes described by Lin et al., 2019 as negative control genes.
+Instead of assuming that the components of unwanted variation in the data are observed, these are estimated from the data using a set of *negative control* genes. The variation in these negative control genes mostly consists of the underlying unwanted variation. In this application, we use the single-cell housekeeping genes described by Lin et al., 2019 as negative control genes. 
 
 
 
 ```{r,message=FALSE}
 # Reading in the control genes
-ctl <- read.csv('../data/scHK_human.csv', header=T)[,1]
+data(Hs.schk)
+ctl <- as.character(Hs.schk)
 ```
 
 
-```{r LSFig, fig.cap='Comparing the overall log library size vs the log library size using the control genes', echo=FALSE,warning=FALSE}
+```{r LSFig, fig.cap='Comparing the overall log library size vs the log library size using the control genes', warning=FALSE}
 #compare overall log Library sizes vs log library sizes using control genes only
 sce$logLS <- log(colSums(assays(sce)$counts))
 rowData(sce)$ctlLogical<-rownames(assays(sce)$counts) %in% ctl
@@ -365,15 +325,11 @@ plot(sce$logLS,sce$logLS_ctl,col="grey",
 
 
 As the NSCLC dataset only consists of a single batch, initial clustering is used to identify a set of homogeneous cells following scran normalisation. Cells which belong to the same initial cluster are then considered as pseudo-replicates. The code for doing this is shown below.
-<!-- , but not-run. A pre-saved output is loaded for demonstrations. -->
-
-```{r,message=FALSE,warning=FALSE,  include=FALSE,eval=FALSE}
-assays(sce, withDimnames=FALSE)
-```
 
 
 
-```{r,message=FALSE,warning=FALSE, eval=FALSE}
+
+```{r,message=FALSE,warning=FALSE}
 
 # Perform initial clustering to identify pseudo-replicates
 snn_gr_init <- buildSNNGraph(sce, assay.type = "lognormcounts")
@@ -404,39 +360,7 @@ sce <- runPCA(sce,exprs_values = "lognormcounts")
 ```
 
 
-
-```{r,message=FALSE,warning=FALSE,, include=FALSE, eval=FALSE}
-#Undo this to save this file for future use
-#Saving the preproccessed NSCLC data file
-#saveRDS(sce,file='NSCLC_preprocessed_init_annonated_27_09_2021.rds')
-```
-
 Figure \@ref(fig:ClFig) visualises the initial clusters for identifying pseudo-replicates. The UMAP plots show that the cell type is correlated with the library size.
-
-```{r,message=FALSE,warning=FALSE, include=FALSE}
-#Saving the preproccessed NSCLC data file 
-rm(list=ls())
-library(ruvIIInb)
-library(SingleCellExperiment)
-library(scater)
-library(scran)
-library(scuttle)
-library(edgeR)
-require(SingleR)
-library(celldex)
-library(hrbrthemes)
-library(tidyverse)
-library(ggplot2)
-library(uwot)
-library(pheatmap)
-library(SingleR)
-library(dittoSeq)
-
-
-
-sce<-readRDS('../inst/extdata/NSCLC_preprocessed_init_annonated_27_09_2021.rds') 
-```
-
 
 
 ```{r ClFig, fig.cap='Visualising the initial clusters for identifying pseudo-replicates', echo=FALSE,warning=FALSE}
@@ -470,12 +394,6 @@ ruv3nb_out<-ruvIII.nb(Y=as.matrix(assays(sce)$counts), # count matrix with genes
 ```
 
 
-```{r,message=FALSE,eval=FALSE,include=FALSE}
-which(rowData(sce)$mean==0)
-which(rowSums(as.matrix(assays(sce)$counts))==0)
-which(colSums(as.matrix(assays(sce)$counts))==0)
-```
-
 #### Running RUV-III-NB with pseudo-cells
 
 In the above, the pseudo-replicates were identified through the use of initial clustering. As an optional step, we can strengthen the pseudo-replicates identified from this initial clustering using the pool and divide strategy. Note that we need to specify `strata`, so that the cells which belong to different `strata` (in this case, initial clusters we have identified) are not pooled together.
@@ -497,10 +415,9 @@ ruv3nb_out_ps<-ruvIII.nb(Y=as.matrix(assays(sce)$counts),
 
 ### Downstream analyses and assessing the normalisation
 
- <!-- ,eval=FALSE -->
+
 ```{r,message=FALSE,include=FALSE}
-ruv3nb_out<- readRDS('../inst/extdata/NSCLC_ruvIIInb_ADL3_new0.1_27092021_K2_clM.rds')
-# ruv3nb_out<- readRDS('../inst/extdata/NSCLC_ruvIIInb_ADL3_new0.1_18092021_K2_pcM.rds')
+ruv3nb_out<-readRDS(system.file("extdata", "NSCLC_ruvIIInb_K2_clM.rds", package="ruvIIInb"))
 ```
 
 
@@ -520,14 +437,8 @@ gridExtra::grid.arrange(p1,p2,ncol=2)
 For downstream analyses, we recommend creating a `SingleCellExperiment` object. This `SingleCellExperiment` object contains the normalised data in the \texttt{pearson} and \texttt{logcorrected} components of the \texttt{assay} slot. 
 
 
-```{r,message=FALSE,include=FALSE}
-sce_ruv3nb<-readRDS('../inst/extdata/NSCLC_ruvIIInb_ADL3_new0.1_27092021_K2_clM_annotated.rds')
-```
 
-
-
-```{r,message=FALSE,eval=FALSE}
-
+```{r,message=FALSE}
 #Creating a SingleCellExperiment object
 sce_ruv3nb <- makeSCE(ruv3nb_out,cData=colData(sce))
 ```
@@ -540,14 +451,6 @@ seurat_ruv3nb <- as.Seurat(sce_ruv3nb, counts = "counts", data ="logcorrected")
 ```
 
 
-```{r,message=FALSE,eval=FALSE,include=FALSE,eval=FALSE}
-# DimPlot(seurat_ruv3nb, reduction = "PCA", group.by = "ctype_init2") + NoLegend()
-# p1 <- DimPlot(seurat_ruv3nb, reduction = "PCA", group.by = "Source") + NoLegend()
-# p2 <- RidgePlot(manno.seurat, features = "ACTB", group.by = "Source")
-# CombinePlots(plots = list(p1, p2))
-# 
-
-```
 
 Once created, the SCE object can be used for downstream analyses such as dimensional reduction, clustering and differential expression analysis.
 
@@ -562,7 +465,8 @@ Once created, the SCE object can be used for downstream analyses such as dimensi
 We now demonstrate performing principal components analysis on cells based on the Log of percentile-invariant adjusted count.
 
 
-```{r,eval=FALSE}
+
+```{r}
 # PCA of RUV-III-NB normalized data 
 sce_ruv3nb <- runPCA(sce_ruv3nb, exprs_values = "logcorrected")
 
@@ -592,7 +496,7 @@ The codes for performing cell-type identification, annotating clusters and cells
 
 
 
-```{r,message=FALSE,eval=FALSE}
+```{r,message=FALSE,warning=FALSE}
 
 # Perform clustering
 snn_gr <- buildSNNGraph(sce_ruv3nb, assay.type = "logcorrected")
@@ -620,12 +524,6 @@ sce_ruv3nb <- runUMAP(sce_ruv3nb, exprs_values = "logcorrected")
 ```
 
 
-
-```{r,message=FALSE,include=FALSE,eval=FALSE}
-#Saving the preproccessed AND ANNONATED NSCLC data file
-saveRDS(sce_ruv3nb,file='NSCLC_ruvIIInb_ADL3_new0.1_27092021_K2_clM_annotated.rds')
-
-```
 
 
 
@@ -659,25 +557,12 @@ pheatmap(logFCs_cluster3_top5, breaks=seq(-5, 5, length.out=101))
 
 ## Example II: Celline data, use known celltype to define pseudo-replicates
 
-<!--  -->
-```{r,include=FALSE,eval=FALSE}
-#Downloading after saving the output to save time
-rm(list=ls())
-sce_ruv3nb_celline<-readRDS('../inst/extdata/celline_ruvIIInb_ADL0.1_18092021_K2_added.rds')
-#new.labels is misspelt
-names_ruv3nb_celline<-names(colData(sce_ruv3nb_celline))
-names(colData(sce_ruv3nb_celline))[which(names_ruv3nb_celline=="new.lables")]<-"new.labels"
-names(colData(sce_ruv3nb_celline))
-sce_celline<-readRDS('../inst/extdata/sce_celline_added.rds') 
-names_celline<-names(colData(sce_celline))
-names(colData(sce_celline))[which(names_celline=="new.lables")]<-"new.labels"
-names(colData(sce_celline))
-```
 
 
-```{r,include=FALSE}
+
+```{r,include=TRUE}
 rm(list=ls())
-sce_celline<- readRDS('../inst/extdata/celline_preproc_ADL30.1_18092021.rds')
+sce_celline<-readRDS(system.file("extdata", "celline_preprocessed.rds", package="ruvIIInb"))
 
 #new.labels is misspelt
 names_celline<-names(colData(sce_celline))
@@ -691,9 +576,10 @@ celline_rows<-rowData(sce_celline)
 ```
 
 
-The Celline dataset consists of the following: (i) A count data matrix `celline_obs` which consists of `r dim(sce_celline)[1]` genes in rows and `r dim(sce_celline)[2]` cells in columns, and (ii) A data frame that describes the cells consisting of details such as the batch (`batch`) and the cell type (`new.labels`). The output following quality control is used to demonstrate the concepts here.
+The Celline dataset consists of the following: (i) A count data matrix `celline_obs` which consists of `r dim(sce_celline)[1]` genes in rows and `r dim(sce_celline)[2]` cells in columns, and (ii) A data frame that describes the cells consisting of details such as the batch (`batch`) and the cell type (`new.labels`). The output following quality control is used above to demonstrate the concepts.
 
-<!-- ,eval=FALSE -->
+
+
 ```{r}
 sce_celline <- SingleCellExperiment(assays=list(counts=celline_obs),
                             colData=as.data.frame(celline_samples),
@@ -701,12 +587,7 @@ sce_celline <- SingleCellExperiment(assays=list(counts=celline_obs),
 
 ```
 
-<!-- ,eval=FALSE -->
-```{r,include=FALSE}
-names_celline<-names(colData(sce_celline))
-names(colData(sce_celline))[which(names_celline=="new.lables")]<-"new.labels"
-names(colData(sce_celline))
-```
+
 
 ### Normalisng the data using RUV-III-NB
 
@@ -715,28 +596,33 @@ As the cell types are known for this example, the replicate matrix M is construc
 ```{r,message=FALSE,eval=FALSE}
 
 # Construct the replicate matrix M using the known cell-types
-unique_ctype<- unique(sce_celline$new.lables)
+unique_ctype<- unique(sce_celline$new.labels)
 M <- matrix(0,ncol(assays(sce_celline)$counts),length(unique_ctype))
 dim(M)
 for(i in 1:length(unique_ctype))
- M[sce_celline$new.lables==unique_ctype[i],i] <- 1
+ M[sce_celline$new.labels==unique_ctype[i],i] <- 1
 
+#Read-in the control genes
+data(Hs.schk)
+ctl <- as.character(Hs.schk)
+ctl <- rownames(assays(sce_celline)$counts) %in% ctl
 
 #RUV-III-NB code
 ruv3nb_out_celline<-ruvIII.nb(Y=as.matrix(assays(sce_celline)$counts),
                            M=M,
                            ctl=ctl,
-                           k=2)
+                           k=2,
+                           ncores = 6)
 
 ```
 
-<!-- ,eval=FALSE -->
+
 ```{r,message=FALSE,include=FALSE}
 #Loading the pre-saved RUV-III-NB sce output 
-ruv3nb_out_celline<- readRDS('../inst/extdata/celline_ruvIIInb_ADL0.1_18092021_K2.rds')
+ruv3nb_out_celline<-readRDS(system.file("extdata", "celline_ruvIIInb_K2.rds", package="ruvIIInb"))
 ```
 
-<!-- ,eval=FALSE -->
+
 ```{r,message=FALSE,warning=FALSE}
 
 #Creating a SingleCellExperiment object
@@ -768,7 +654,7 @@ gridExtra::grid.arrange(p1,p2,ncol=2)
 
 We now demonstrate performing clustering on the RUV-III-NB normalised data.
 
-<!-- # ,eval=FALSE -->
+
 ```{r}
 # PCA and UMAP of RUV-III-NB normalized data 
 sce_ruv3nb_celline <- runPCA(sce_ruv3nb_celline, exprs_values = "logcorrected")
@@ -776,7 +662,7 @@ sce_ruv3nb_celline <- runUMAP(sce_ruv3nb_celline, exprs_values = "logcorrected")
 ```
 
 
-<!-- # ,eval=FALSE -->
+
 ```{r} 
 # PCA and UMAP of Scran normalized data 
 sce_celline <- computeSumFactors(sce_celline,assay.type="counts")
@@ -787,12 +673,7 @@ sce_celline <- runUMAP(sce_celline,exprs_values = "lognormcounts")
 ```
 
 
-```{r,message=FALSE,warning=FALSE, include=FALSE, eval=FALSE}
-#save the files here for download
-saveRDS(sce_ruv3nb_celline,file='celline_ruvIIInb_ADL0.1_18092021_K2_added.rds') 
-saveRDS(sce_celline,file='sce_celline_added.rds') 
-
-```
+`
 
 
 ```{r PCARUVFigcelline, fig.cap='Visualising PCA following RUV-III-NB normalisation of the Celline data', echo=FALSE,warning=FALSE}
@@ -811,13 +692,13 @@ gridExtra::grid.arrange(p1,p2,ncol=2)
 ```{r ClRUVFigcelline, fig.cap='Visualising the clusters following RUV-III-NB normalisation of the Celline data', echo=FALSE,warning=FALSE}
 
 p1 <- plotUMAP(sce_ruv3nb_celline,colour_by='new.labels')+ggtitle('RUV-III-NB normalized')
-#p2 <- plotUMAP(sce_ruv3nb,colour_by='cluster10X')
-p3 <- plotUMAP(sce_ruv3nb_celline,colour_by='new.labels')+ggtitle('RUV-III-NB normalized')
-p1s <- plotUMAP(sce_celline,colour_by='batch')+ggtitle('Scran normalized')
+p3 <- plotUMAP(sce_ruv3nb_celline,colour_by='batch')+ggtitle('RUV-III-NB normalized')
+p1s <- plotUMAP(sce_celline,colour_by='new.labels')+ggtitle('Scran normalized')
 p3s <- plotUMAP(sce_celline,colour_by='batch')+ggtitle('Scran normalized')
 
 
 gridExtra::grid.arrange(p1s,p1,p3s,p3,ncol=2)
+
 
 ```
 
@@ -861,24 +742,21 @@ mode(scm.M) <- 'logical'
 ruv3nb_out_celline_scMerge<- ruvIIInb::ruvIII.nb(as.matrix(assays(sce_celline)$counts),
                             M=scm.M,
                             ctl=ctl,
-                            k=2)
+                            k=2, 
+                            ncores = 6)
 ```
 
 
 ### Downstream analyses and assessing the normalisation
 
 
-```{r,message=FALSE,include=FALSE,eval=FALSE}
-#SAVED after adding pca, umap etc to save time
-sce_ruv3nb_celline_scMerge<- readRDS('../inst/extdata/celline_ruvIIInb_ADL0.1_18092021_scMerge_K2_added.rds')
-```
-
 
 ```{r,message=FALSE,include=FALSE}
-ruv3nb_out_celline_scMerge<- readRDS('../inst/extdata/celline_ruvIIInb_ADL0.1_18092021_scMerge_K2.rds')
+ruv3nb_out_celline_scMerge<- readRDS(system.file("extdata", "celline_ruvIIInb_scMerge_K2.rds", package="ruvIIInb"))
 ```
 
-<!-- ,eval=FALSE -->
+
+
 ```{r,message=FALSE}
 #Creating a SingleCellExperiment object
 sce_ruv3nb_celline_scMerge <- makeSCE(ruv3nb_out_celline_scMerge,
@@ -894,7 +772,7 @@ seurat_ruv3nb_celline_scMerge <- as.Seurat(sce_ruv3nb_celline_scMerge, counts = 
 
 
 
-<!-- ,eval=FALSE -->
+
 
 ```{r}
 
@@ -905,10 +783,6 @@ sce_ruv3nb_celline_scMerge <- runUMAP(sce_ruv3nb_celline_scMerge,
                                       exprs_values = "logcorrected")
 ```
 
-```{r,message=FALSE,warning=FALSE, include=FALSE, eval=FALSE}
-#save the files here for download
-saveRDS(sce_ruv3nb_celline_scMerge,file='celline_ruvIIInb_ADL0.1_18092021_scMerge_K2_added.rds') 
-```
 
 
 ```{r scMergeClRUVFigcelline, fig.cap='Visualising the clusters following RUV-III-NB normalisation of the Celline data using scReplicate', echo=FALSE,warning=FALSE}
