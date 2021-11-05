@@ -368,7 +368,7 @@ Figure \@ref(fig:ClFig) visualises the initial clusters for identifying pseudo-r
 
 ```{r ClFig, fig.cap='Visualising the initial clusters for identifying pseudo-replicates', echo=FALSE,warning=FALSE}
 p1 <- plotUMAP(sce,colour_by='logLS')
-p3 <- dittoDimPlot(sce, "ctype_init",colors=c(1,2,3,4,5,6,7,8))
+p3 <- dittoDimPlot(sce, "ctype_init",colors=1:9)
 gridExtra::grid.arrange(p1,p3,ncol=2)
 
 ```
