@@ -5,3 +5,7 @@ This package removes unwanted variation from raw sequencing count data using Neg
 ```{r eval=FALSE}
 devtools::install_github("limfuxing/ruvIIInb")
 ```
+#Vignette
+```{r, echo=FALSE}
+htmltools::includeHTML("https://github.com/limfuxing/ruvIIInb/inst/doc/ruvIIInbVignette.html")
+```
