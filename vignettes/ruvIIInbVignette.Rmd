@@ -368,7 +368,7 @@ Figure \@ref(fig:ClFig) visualises the initial clusters for identifying pseudo-r
 
 ```{r ClFig, fig.cap='Visualising the initial clusters for identifying pseudo-replicates', echo=FALSE,warning=FALSE}
 p1 <- plotUMAP(sce,colour_by='logLS')
-p3 <- dittoDimPlot(sce, "ctype_init",colors=1:9)
+p3 <- plotUMAP(sce, "ctype_init")
 gridExtra::grid.arrange(p1,p3,ncol=2)
 
 ```
@@ -532,9 +532,9 @@ sce_ruv3nb <- runUMAP(sce_ruv3nb, exprs_values = "logcorrected")
 
 ```{r ClRUVFig, fig.cap='Visualising the clusters following RUV-III-NB normalisation', echo=FALSE,warning=FALSE}
 p1 <- plotUMAP(sce_ruv3nb,colour_by='logLS')+ggtitle('RUV-III-NB normalized')
-p3<-dittoDimPlot(sce_ruv3nb, "ctype_ruv",colors=c(1,3,4,10,5,9, 6,11,7))
+p3<-plotUMAP(sce_ruv3nb, "ctype_ruv")
 p1s <- plotUMAP(sce,colour_by='logLS')+ggtitle('Scran normalized')
-p3s<-dittoDimPlot(sce, "ctype_init",colors=c(1,2,3,4,5,6,7,8))
+p3s<-plotUMAP(sce, "ctype_init")
 gridExtra::grid.arrange(p1s,p1,p3s,p3,ncol=2)
 
 ```
