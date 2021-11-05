@@ -3,5 +3,8 @@ This package removes unwanted variation from raw sequencing count data using Neg
 
 # Installation 
 ```{r eval=FALSE}
-devtools::install_github("limfuxing/ruvIIInb")
+devtools::install_github("limfuxing/ruvIIInb",build_vignettes=FALSE)
 ```
+# Vignette
+[RUV-III-NB Vignette for scRNA-seq]( https://htmlpreview.github.io/?https://github.com/limfuxing/ruvIIInb/blob/master/inst/doc/ruvIIInbVignette.html)
+
