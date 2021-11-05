@@ -6,6 +6,5 @@ This package removes unwanted variation from raw sequencing count data using Neg
 devtools::install_github("limfuxing/ruvIIInb",build_vignettes=FALSE)
 ```
 # Vignette
-```{r, echo=FALSE}
 [RUV-III-NB Vignette for scRNA-seq](https://github.com/limfuxing/ruvIIInb/inst/doc/ruvIIInbVignette.html)
-```
+
