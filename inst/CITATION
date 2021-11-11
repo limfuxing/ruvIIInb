@@ -1,0 +1,31 @@
+bibentry(bibtype = "Article",
+         title = "RUV-III-NB: Normalization of single cell RNA-seq Data",
+         author = c(person("Agus", "Salim"),
+                    person("Ramyar", "Molania"),
+                    person("Jianan", "Wang"),
+                    person("Alysha", "De Livera"),
+                    person("Rachel", "Thijssen"),
+		    person("Terence P.", "Speed")),
+	year = {2021},
+	doi = "10.1101/2021.11.06.467575",
+	publisher = "Cold Spring Harbor Laboratory",
+	URL = "https://www.biorxiv.org/content/early/2021/11/08/2021.11.06.467575",
+	eprint = "https://www.biorxiv.org/content/early/2021/11/08/2021.11.06.467575.full.pdf",
+	journal = "bioRxiv")
+
+bibentry(bibtype= "Article",
+	title = "Assessing and removing the effect of unwanted technical variations in microbiome data",
+	author = c(person("Muhammad","Fachrul"), 
+		   person("Guillaume","M{\'e}ric"), 
+		   person("Michael","Inouye"),
+		   person("S{\"u}nje Johanna","Pamp"),
+		   person("Agus","Salim")),
+	year = {2021},
+	doi = "10.1101/2021.05.21.445058",
+	publisher = "Cold Spring Harbor Laboratory",
+	URL = "https://www.biorxiv.org/content/early/2021/05/25/2021.05.21.445058",
+	eprint = "https://www.biorxiv.org/content/early/2021/05/25/2021.05.21.445058.full.pdf",
+	journal = "bioRxiv")
+
+
+
