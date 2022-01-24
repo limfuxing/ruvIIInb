@@ -1,3 +1,13 @@
+#' Create SingleCellExperiment object containing normalized data
+#'
+#' This function takes ruvIII.nb or fastruvIII.nb output as input and creates a SingleCellExperiment (SCE) object containing various metrics of normalized data.  
+#'
+#' @param obj  object containing output of call to ruvIII.nb or fastruvIII.nb function.
+#' @param cData A data frame containing cell-level metadata. This data frame will be used as 'colData' in the SingleCellExperiment object
+#' @param batch numeric vector containing batch information for each sample. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.
+
+#' @return A SingleCellExperiment object with normalized data added to the 'assays' slot. The log percentile-adjusted count is stored in the 'logcorrected' component of the 'assays' slot and the Pearson residuals is in the 'pearson' component.
+
 makeSCE<-function (obj, cData=NULL, batch = NULL) #pseudo.cells=FALSE 
 {
   if (class(obj$counts)[1] != "matrix") {

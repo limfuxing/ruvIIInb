@@ -7,16 +7,15 @@
 get.res(out, type = "pearson", batch = NULL)
 }
 \arguments{
-\item{out}{output of call to ruvIII.nb function.}
+\item{out}{output of call to ruvIII.nb or fastruvIII.nb function.}
 
-\item{type}{type of normalized data metrics. Options include pearson residuals and percentile-invariant log adjusted count.}
+\item{type}{type of normalized data. Supported options are 'quantile' (percentile-adjusted count), 'pearson' (pearson residuals) and logcounts (log normalized count).}
 
 \item{batch}{numeric vector containing batch information for each sample.Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.}
 }
 \value{
-The normalized count data.
+A matrix containing the normalized data
 }
 \description{
-This function takes ruvIII.nb output as input and produce various metrics of normalized data.
-Option for metrics of normalized data includes log normalized count, Pearson and Deviance residuals.
+This internal function takes ruvIII.nb or fastruvIII.nb output as input and produce various metrics of normalized data.  Option for metrics of normalized data includes percentile-adjusted count (PAC) and Pearson residuals.
 }

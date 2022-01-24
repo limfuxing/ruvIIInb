@@ -2,20 +2,20 @@
 % Please edit documentation in R/makeSCE.R
 \name{makeSCE}
 \alias{makeSCE}
-\title{Add metrics of normalized data to SingleCellExperiment object}
+\title{Create SingleCellExperiment object containing normalized data}
 \usage{
-makeSCE(obj, cData, batch = NULL)
+makeSCE(obj, cData = NULL, batch = NULL)
 }
 \arguments{
-\item{obj}{An ruvIII.nb output.}
+\item{obj}{object containing output of call to ruvIII.nb or fastruvIII.nb function.}
 
-\item{cData}{A data frame containing cell-level metadata.}
+\item{cData}{A data frame containing cell-level metadata. This data frame will be used as 'colData' in the SingleCellExperiment object}
 
-\item{batch}{numeric vector containing batch information for each cell. Must corresponds to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.}
+\item{batch}{numeric vector containing batch information for each sample. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.}
 }
 \value{
-A SingleCellExperiment object with metrics of normalized data in the assay slot. The \code{pearson} component of the assay slot contains the pearson residuals and the \code{logcorrected} component contains the log of percentile-invariant adjusted data + 1.
+A SingleCellExperiment object with normalized data added to the 'assays' slot. The log percentile-adjusted count is stored in the 'logcorrected' component of the 'assays' slot and the Pearson residuals is in the 'pearson' component.
 }
 \description{
-This function takes ruvIIInb output and creates SingleCellExperiment object that contains various metrics of normalized data.
+This function takes ruvIII.nb or fastruvIII.nb output as input and creates a SingleCellExperiment (SCE) object containing various metrics of normalized data.
 }
