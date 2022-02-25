@@ -2,3 +2,4 @@
 
 export(fastruvIII.nb)
 export(ruvIII.nb)
+export(makeSCE)

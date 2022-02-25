@@ -118,7 +118,7 @@ Y.norm <- sweep(Ysub,1,exp(off.g),'/')
 Wsub <- irlba::irlba(log(as.matrix(Y.norm[ctl,])+1),nv=k)$v
 Msub <- as.matrix(M[subsamples,])
 rep.sub <- apply(Msub,2,which)
-batch.sub <- batch[subsamples]
+sub.batch <- batch[subsamples]
 nsub <- ncol(Ysub)
 
 # initiate beta and alpha: by performing poisson GLM gene-by-gene
