@@ -1,6 +1,6 @@
 #' Removing unwanted variation from sequencing count data 
 #'
-#' This function performs faster version of ruvIIInb method to remove unwanted variation from sequencing count data. The method has been applied to single-cell RNA-seq data but in principle it is applicable to count data from any sequencing platforms. It takes raw count matrix with features (genes/transcript in scRNA-seq) as rows and samples (cells in scRNA-seq) as columns. 
+#' This function performs fast version of ruvIIInb method to remove unwanted variation from sequencing count data. Currently, only Negative Binomial model is implemented. It takes raw count matrix with features (genes/transcript in scRNA-seq) as rows and samples (cells in scRNA-seq) as columns. 
 #' Users need to specify the set of negative control genes (i.e genes where the between cells variation is assumed to be solely due to the unwanted variation) 
 #' and the (pseudo)replicate matrix that define sets of cells that can be considered technical replicates.
 #'
@@ -23,13 +23,12 @@
 #' @param strata By default the creation of pseudo-samples are stratified by batch and library size ONLY. This default strategy should work well if the biological factor of 
 #'        interest is not associated with batch. If they are associated, this strategy will risk removing too much biology. Specifying the biological factor as 'strata' variable helps reducing the amount of biology removed.
 #' @param batch.disp whether to fit batch-speficic dispersion parameter for each gene. The default is FALSE.
-#' @param zeroinf logical vector indicating whether to fit zero-inflated negative binomial (ZINB) instead of NB model (the default) for some/all cells. The length of the vector #'        must equal the number of cells. We recommend that non-UMI data be fitted using ZINB and UMI data be fitted using NB model.
 #' @param pCells.touse the proportion of cells used to estimate alpha and dispersion parameter (for speed-up). Default=20%.
   
 #' @return A list containing the raw data (as sparse matrix), the unwanted factors and regression coefficients associated with the unwanted factors.
 #' @export
 fastruvIII.nb <- function(Y,M,ctl,k=2,robust=FALSE,ortho.W=FALSE,lambda.a=0.01,lambda.b=16,batch=NULL,step.fac=0.5,inner.maxit=50,outer.maxit=25,
-        ncores=2,use.pseudosample=FALSE,nc.pool=20,strata=NULL,batch.disp=FALSE,zeroinf=NULL,pCells.touse=0.2) {
+        ncores=2,use.pseudosample=FALSE,nc.pool=20,strata=NULL,batch.disp=FALSE,pCells.touse=0.2) {
 
 # register parallel backend
 #register(BPPARAM)
@@ -40,9 +39,6 @@ BPPARAM=BiocParallel::DoparParam()
 require(doParallel)
 require(foreach)
 parallel <- as.logical(ncores>1)
-
-if(is.null(zeroinf))
-  zeroinf <- rep(FALSE,ncol(Y))
 
 if(!is.logical(ctl)) 
   ctl <- rownames(Y) %in% ctl
@@ -89,10 +85,6 @@ if(use.pseudosample) {
    use.pseudosample <- FALSE
   }
 }
-# if using pseudosamples, only NB models can be fitted
-if(use.pseudosample)
-  zeroinf <- rep(FALSE,ncol(Y))
-
 
 # get Huber's k
 k.huber<- ifelse(robust,1.345,100)

@@ -260,11 +260,18 @@ while(!conv) {
  ### calculate initial loglik
  lmu.hat    <- gmean + Mb[,apply(M,1,which)] + alpha %*% t(W) 
 
- if(!is.null(batch))
-  temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
- if(is.null(batch))
-  temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=outer(1/psi,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
- 
+ if(!is.null(batch)) {
+  if(!any(pi0>0)) 
+    temp <- dnbinom(Y,mu=exp(lmu.hat),size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE)
+  if(any(pi0>0)) 
+    temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
+ }
+ if(is.null(batch)) {
+  if(!any(pi0>0)) 
+   temp <- dnbinom(Y,mu=exp(lmu.hat),size=outer(1/psi,ncells,'*'),log=TRUE)
+  if(any(pi0>0))
+   temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=outer(1/psi,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
+ }
  temp[is.infinite(temp) | is.na(temp)] <- log(.Machine$double.xmin)
  loglik <- rowSums(temp) #- lambda.a*rowSums(scale(alpha,scale=FALSE)^2) - lambda.b*rowSums(Mb^2)
  #############################
@@ -446,13 +453,20 @@ while(!conv) {
 
  # calculate current logl
  lmu.hat    <- gmean + Mb[,apply(M,1,which)] + alpha %*% t(W) 
- if(!is.null(batch))
-  temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
- if(is.null(batch))
-  temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=outer(1/psi,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
- 
+ if(!is.null(batch)) {
+  if(!any(pi0>0)) 
+    temp <- dnbinom(Y,mu=exp(lmu.hat),size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE)
+  if(any(pi0>0)) 
+    temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
+ }
+ if(is.null(batch)) {
+  if(!any(pi0>0)) 
+   temp <- dnbinom(Y,mu=exp(lmu.hat),size=outer(1/psi,ncells,'*'),log=TRUE)
+  if(any(pi0>0))
+   temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=outer(1/psi,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
+ } 
  temp[is.infinite(temp) | is.na(temp)] <- log(.Machine$double.xmin)
- loglik.tmp <- rowSums(temp) #- lambda.a*rowSums(scale(alpha,scale=FALSE)^2) - lambda.b*rowSums(Mb^2)
+ loglik.tmp <- rowSums(temp) 
  # check degenerate case
  if(iter>=1) {
   degener<- sum(loglik)>sum(loglik.tmp)
@@ -547,10 +561,18 @@ best.psi <- psi
 
 # recalculate working vector and weight
 lmu.hat    <- gmean + Mb[,apply(M,1,which)] + alpha %*% t(W) 
- if(!is.null(batch))
-  temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
- if(is.null(batch))
-  temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=outer(1/psi,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
+ if(!is.null(batch)) {
+  if(!any(pi0>0)) 
+    temp <- dnbinom(Y,mu=exp(lmu.hat),size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE)
+  if(any(pi0>0)) 
+    temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
+ }
+ if(is.null(batch)) {
+  if(!any(pi0>0)) 
+   temp <- dnbinom(Y,mu=exp(lmu.hat),size=outer(1/psi,ncells,'*'),log=TRUE)
+  if(any(pi0>0))
+   temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=outer(1/psi,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
+ }
 
 temp[is.infinite(temp) | is.na(temp)] <- log(.Machine$double.xmin)
 logl.outer <- c(logl.outer, sum(temp)) #-lambda.a*sum(scale(alpha,scale=FALSE)^2)-lambda.b*sum(Mb^2))
@@ -571,16 +593,16 @@ if(conv) {
 }
 } # end of outer IRLS loop
 
-# calculate psi for DE (where Mb is left out of the offset)
-psi.DE <- psi
 # save raw count as sparse matrix
 Y  <- Matrix::Matrix(Y,sparse=TRUE)
-# prepare and save zero-inflation parameter as parse matrix
-pi0<- outer(pi0,as.numeric(zeroinf))
-pi0<- Matrix::Matrix(pi0,sparse=TRUE)
+# if ZINB, prepare and save zero-inflation parameter as sparse matrix
+if(any(pi0>0)) {
+ pi0<- outer(pi0,as.numeric(zeroinf))
+ pi0<- Matrix::Matrix(pi0,sparse=TRUE)
+}
 #output
 return( list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"Mb"=Mb, "gmean"=gmean,"pi0"=pi0,
-		"psi"=psi,'psi.DE'=psi.DE,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch) )
+		"psi"=psi,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch) )
 }
 
 #### Helpers functions ######################################################################################
