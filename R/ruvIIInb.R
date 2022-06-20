@@ -12,23 +12,20 @@
 #' @param ortho.W logical value. Whether the unwanted factors (W) are to be orthogonalized. The default is FALSE.
 #' @param lambda.a smoothing parameter for regularizing regression coefficients associated with W. The default is 0.01
 #' @param lambda.b smoothing parameter for regularizing the gene-level intercepts. The default is 16.
-#' @param batch numeric vector containing batch information for each cell. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is
-#'        fitted AND/OR use.pseudosamples=TRUE.
+#' @param batch numeric vector containing batch information for each cell. Must correspond to columns of count matrix. If not supplied, cells are assumed to come from one batch.
 #' @param step.fac multiplicative factor to decrease IRLS step by when log-likelihood diverges. Default is 0.5
 #' @param inner.maxit the maximum number of IRLS iteration for estimating mean parameters for a given dispersion parameter. Default is 50
 #' @param outer.maxit the maximum number of IRLS iteration. Default is 25 
 #' @param ncores The number of cores used for parallel processing. The default number of workers (cores) is 2.
-#' @param use.pseudosample whether to use pseudocell to define replicates (default is FALSE). Note that the replicates defined by the pseudocells will be used in addition to any replicates defined by the M matrix above. If no replicate is defined by the M matrix (ie M matrix is an identity matrix) then the unwanted variation will be estimated using the pseudoreplicates defined by the pseudocells only. We recommend that use.pseudosample=TRUE be used only for data with UMI.
+#' @param use.pseudosample whether to use pseudocell to define replicates (default is FALSE). Note that the replicates defined by the pseudocells will be used in addition to any replicates defined by the M matrix above. We recommend that use.pseudosample=TRUE be used only for data with UMI.
 #' @param nc.pool the number of cells per pool (used for defining pseudocells). The default is 20. Only relevant when use.pseudosample=TRUE.
-#' @param strata By default the creation of pseudo-samples are stratified by batch and library size ONLY. This default strategy should work well if the biological factor of 
-#'        interest is not correlated with batch. If they are correlated, this strategy will risk removing too much biology. Specifying the biological factor as 'strata' variable helps reducing the amount of biology removed.
-#' @param batch.disp whether to fit batch-speficic dispersion parameter for each gene. The default is FALSE.
+#' @param batch.disp whether to fit batch-specific dispersion parameter for each gene. The default is FALSE.
 #' @param zeroinf logical vector indicating whether to fit zero-inflated negative binomial (ZINB) instead of NB model (the default) for some/all cells. The length of the vector #'        must equal the number of cells. We recommend that non-UMI data be fitted using ZINB and UMI data be fitted using NB model.
-  
-#' @return A list containing the raw data (as sparse matrix), the unwanted factors and regression coefficients associated with the unwanted factors.
+
+#' @return A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
 #' @export
 ruvIII.nb <- function(Y,M,ctl,k=2,robust=FALSE,ortho.W=FALSE,lambda.a=0.01,lambda.b=16,batch=NULL,step.fac=0.5,inner.maxit=50,outer.maxit=25,
-        ncores=2,use.pseudosample=FALSE,nc.pool=20,strata=NULL,batch.disp=FALSE,zeroinf=NULL) {
+        ncores=2,use.pseudosample=FALSE,nc.pool=20,batch.disp=FALSE,zeroinf=NULL) {
 
 # register parallel backend
 #register(BPPARAM)
@@ -49,6 +46,8 @@ nctl<- sum(ctl)
 
 # force M matrix into logical
 mode(M) <- 'logical'
+# define strata as columns of M matrix for which a cell is part of
+strata <- apply(M,1,which)
 
 # Winsorize gene-by-gene and calculate size-factor
 Y <- ceiling(t(apply(Y,1,DescTools::Winsorize,probs=c(0,0.995),na.rm=TRUE)))
@@ -69,10 +68,27 @@ if(is.null(batch) & batch.disp) {
   batch.disp <- FALSE
 }
 
+# if no batch info is supplied but use.pseudosample=TRUE, forced use.pseudosample=FALSE
+if(is.null(batch) & use.pseudosample) {
+  print(paste0('Batch variable not supplied...cannot use pseudosample to define rep matrix'))
+  use.pseudosample <- FALSE
+}
+
+# if no batch info is supplied, assumes cells come from one batch
+if(is.null(batch)) {
+  print(paste0('Batch variable not supplied...assuming cells come from one batch'))
+  batch <- rep(1,ncol(Y))
+}
+
 # adding pseudosamples
 ncells <- rep(1,length(sf))
 sample.type <- rep('sc',length(sf))
-nsc <- ncol(Y)
+# number of single cells before pseudocells addition
+nsc.org <- nsc <- ncol(Y)
+# number of batches before pseudocells addition
+nbatch.org <- ifelse(is.null(batch),1,length(unique(batch)))
+# if batch.disp=FALSE, force nbatch.org =1
+nbatch.org <- ifelse(!batch.disp,1,nbatch.org)
 if(use.pseudosample) {
  if(is.null(strata)) {
    batch.ext <- batch
@@ -83,7 +99,6 @@ if(use.pseudosample) {
        pool <- Y[,1:nsc][,batch==btc][,qsf==q]
        dns.pool <- rbinom(nrow(pool),size=rowSums(pool),prob=1/ncol(pool))
        Y <- cbind(Y,dns.pool)
-       #ncells <- c(ncells, sum(sf[batch==btc][qsf==q])^2/sum(sf[batch==btc][qsf==q]^2))
        sample.type <- c(sample.type,'sc')
        batch.ext  <- c(batch.ext,btc+max(batch))
        M      <- rbind(M,FALSE)
@@ -107,7 +122,6 @@ if(use.pseudosample) {
        pool <- Y[,1:nsc][,batch==btc & strata==st & !is.na(strata)][,qsf==q]
        dns.pool <- rbinom(nrow(pool),size=rowSums(pool),prob=1/ncol(pool))
        Y <- cbind(Y,dns.pool)
-       #ncells <- c(ncells, sum(sf[batch==btc][qsf==q])^2/sum(sf[batch==btc][qsf==q]^2))
        sample.type <- c(sample.type,'sc')
        batch.ext  <- c(batch.ext,btc+max(batch))
        temp.M      <- rbind(temp.M,FALSE)
@@ -128,18 +142,20 @@ if(use.pseudosample) {
 
  } # if
 }
+nbatch <- ifelse(is.null(batch),1,length(unique(batch)))
 
 # if using pseudosamples, only NB models can be fitted
-if(use.pseudosample)
+if(use.pseudosample) {
+  if(any(zeroinf))
+    print(paste0('Cannot fit ZINB model when using pseudo-samples. NB model will be fitted instead.'))
   zeroinf <- rep(FALSE,ncol(Y))
-
+}
 
 # get Huber's k
 k.huber<- ifelse(robust,1.345,100)
 
 ncells <- rep(1,ncol(Y))
 sf <- rep(1,ncol(Y))
-#sf <- colSums(Y)
 sf <- sf/mean(sf) 
 Y.norm <- sweep(as.matrix(Y),2,sf,'/')
 off.g  <- log(rowMeans(Y.norm))
@@ -153,7 +169,6 @@ W  <- svd.out$v
 
 #format and convert M matrix into list of indices to save space
 rep.ind <- apply(M,2,which)
-
 
 # initiate beta and alpha: by performing poisson GLM gene-by-gene
 nW   <- ncol(W)
@@ -191,10 +206,10 @@ Wa   <- alpha %*% t(W)
 offs <- Wa + Mb[,apply(M,1,which)] 
 nsc  <- sum(sample.type=='sc')
 if(parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi <- estimateDisp.par(Y[,sample.type=='sc'],as.matrix(rep(1,nsc)),offset=offs[,sample.type=='sc'],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM,
 				weights=wt.zinb[,sample.type=='sc'])$tagwise.dispersion
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi <- estimateDisp.par(Y[,batch==1 & sample.type=='sc'],as.matrix(rep(1,sum(batch==1 & sample.type=='sc'))),
 				offset=offs[,batch==1 & sample.type=='sc'],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM,
 				weights=wt.zinb[,batch==1 & sample.type=='sc'])$tagwise.dispersion
@@ -205,9 +220,9 @@ if(parallel) {
  }
 } 
 if(!parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi <- edgeR::estimateDisp(Y,as.matrix(rep(1,nsc)),offset=offs[,sample.type=='sc'],tagwise=TRUE,robust=TRUE,weights=wt.zinb[,sample.type=='sc'])$tagwise.dispersion
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi <- edgeR::estimateDisp(Y[,batch==1 & sample.type=='sc'],as.matrix(rep(1,sum(batch==1 & sample.type=='sc'))),
 				offset=offs[,batch==1 & sample.type=='sc'],tagwise=TRUE,robust=TRUE,
 				weights=wt.zinb[,batch==1 & sample.type=='sc'])$tagwise.dispersion
@@ -224,9 +239,9 @@ if(any(zeroinf)) {
  tmp <- foreach(i=1:ngene, .combine=c, .packages="ZIM") %dopar% {
    y     <- Y[i,zeroinf]
    muvec <- mu[i,zeroinf]
-   if(is.null(batch))
+   if(nbatch==1)
     psivec<- rep(psi[i],sum(zeroinf,na.rm=T))
-   if(!is.null(batch))
+   if(nbatch>1)
     psivec<- psi[i,batch][zeroinf]
 
    out <- tryCatch({ optim(p=-2,fn=logl.zinb,y=y,mu=muvec,size=1/psivec)$p}, error = function(e) {NA})
@@ -239,9 +254,9 @@ if(any(zeroinf)) {
 if(any(zeroinf)) {
  for(i in which(zeroinf)) {
   zero.Y <- which(Y[,i]==0)
-  if(is.null(batch))
+  if(nbatch==1)
     psivec<- psi[zero.Y]
-  if(!is.null(batch))
+  if(nbatch>1)
     psivec<- psi[zero.Y,batch[i]]
   
   wt.zinb[zero.Y,i] <- 1 - pi0[zero.Y]/(pi0[zero.Y] + (1-pi0[zero.Y])*dnbinom(0,mu=exp(offs[zero.Y,i]+gmean[zero.Y]),size=1/psivec))
@@ -260,13 +275,13 @@ while(!conv) {
  ### calculate initial loglik
  lmu.hat    <- gmean + Mb[,apply(M,1,which)] + alpha %*% t(W) 
 
- if(!is.null(batch)) {
+ if(nbatch>1) {
   if(!any(pi0>0)) 
     temp <- dnbinom(Y,mu=exp(lmu.hat),size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE)
   if(any(pi0>0)) 
     temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
  }
- if(is.null(batch)) {
+ if(nbatch==1) {
   if(!any(pi0>0)) 
    temp <- dnbinom(Y,mu=exp(lmu.hat),size=outer(1/psi,ncells,'*'),log=TRUE)
   if(any(pi0>0))
@@ -288,17 +303,17 @@ while(!conv) {
  lmu.hat    <- gmean + Mb[,apply(M,1,which)] + alpha %*% t(W) 
 
  # weight based on NB
- if(!is.null(batch))
+ if(nbatch>1)
   sig.inv<- 1/(exp(-lmu.hat) + sweep(psi[,batch],2,ncells,'/'))
- if(is.null(batch))
+ if(nbatch==1)
   sig.inv<- 1/(exp(-lmu.hat) +outer(psi,ncells,'/'))
  
  # calculate signed deviance
- if(!is.null(batch)) {
+ if(nbatch>1) {
    signdev <- sign(Y-exp(lmu.hat))* sqrt(2*(dnbinom(Y,mu=Y,size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE) - 
 						dnbinom(Y,mu=exp(lmu.hat),size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE) ))
  }
- if(is.null(batch)) {
+ if(nbatch==1) {
    signdev <- sign(Y-exp(lmu.hat))* sqrt(2*(dnbinom(Y,mu=Y,size=outer(1/psi,ncells,'*'),log=TRUE) - dnbinom(Y,mu=exp(lmu.hat),size=outer(1/psi,ncells,'*'),log=TRUE) ))
  }  
  
@@ -424,9 +439,9 @@ while(!conv) {
   tmp <- foreach(i=1:ngene, .combine=c, .packages="ZIM") %dopar% {
    y     <- Y[i,zeroinf]
    muvec <- mu[i,zeroinf]
-   if(is.null(batch))
+   if(nbatch==1)
     psivec<- rep(psi[i],sum(zeroinf,na.rm=T))
-   if(!is.null(batch))
+   if(nbatch>1)
     psivec<- psi[i,batch][zeroinf]
 
    out <- tryCatch({ optim(p=-2,fn=logl.zinb,y=y,mu=muvec,size=1/psivec)$p}, error = function(e) {NA})
@@ -442,9 +457,9 @@ while(!conv) {
  if(any(zeroinf)) {
   for(i in which(zeroinf)) {
    zero.Y <- which(Y[,i]==0)
-   if(is.null(batch))
+   if(nbatch==1)
     psivec<- psi[zero.Y]
-   if(!is.null(batch))
+   if(nbatch>1)
     psivec<- psi[zero.Y,batch[i]]
   
    wt.zinb[zero.Y,i] <- 1 - pi0[zero.Y]/(pi0[zero.Y] + (1-pi0[zero.Y])*dnbinom(0,mu=mu[zero.Y,i],size=1/psivec))
@@ -453,13 +468,13 @@ while(!conv) {
 
  # calculate current logl
  lmu.hat    <- gmean + Mb[,apply(M,1,which)] + alpha %*% t(W) 
- if(!is.null(batch)) {
+ if(nbatch>1) {
   if(!any(pi0>0)) 
     temp <- dnbinom(Y,mu=exp(lmu.hat),size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE)
   if(any(pi0>0)) 
     temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
  }
- if(is.null(batch)) {
+ if(nbatch==1) {
   if(!any(pi0>0)) 
    temp <- dnbinom(Y,mu=exp(lmu.hat),size=outer(1/psi,ncells,'*'),log=TRUE)
   if(any(pi0>0))
@@ -480,9 +495,9 @@ while(!conv) {
      mu  <- exp(alpha %*% t(W) + Mb[,apply(M,1,which)] + gmean)
      for(i in which(zeroinf)) {
       zero.Y <- which(Y[,i]==0)
-      if(is.null(batch))
+      if(nbatch==1)
        psivec<- psi[zero.Y]
-      if(!is.null(batch))
+      if(nbatch>1)
        psivec<- psi[zero.Y,batch[i]]
       wt.zinb[zero.Y,i] <- 1 - pi0[zero.Y]/(pi0[zero.Y] + (1-pi0[zero.Y])*dnbinom(0,mu=mu[zero.Y,i],size=1/psivec))
      }
@@ -521,10 +536,10 @@ Wa = best.a %*% t(best.W)
 offs <- Wa + best.Mb[,apply(M,1,which)] 
 if(updt.psi) {
 if(parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi.new <- tryCatch({ estimateDisp.par(Y[,sample.type=='sc'],as.matrix(rep(1,nsc)),offset=offs[,sample.type=='sc'],
 				tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM,weights=wt.zinb[,sample.type=='sc'])$tagwise.dispersion}, error = function(e) {NA})
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi.new <- psi
   for(B in 1:max(batch)) 
    psi.new[,B]<-tryCatch({estimateDisp.par(Y[,batch==B & sample.type=='sc'],as.matrix(rep(1,sum(batch==B & sample.type=='sc'))),
@@ -534,10 +549,10 @@ if(parallel) {
 }
 
 if(!parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi.new <- tryCatch({ edgeR::estimateDisp(Y[,sample.type=='sc'],as.matrix(rep(1,nsc)),offset=offs[,sample.type=='sc'],tagwise=TRUE,robust=TRUE,
 				weights=wt.zinb[,sample.type=='sc'])$tagwise.dispersion},error = function(e) {NA})
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi.new <- psi
   for(B in 1:max(batch)) 
    psi.new[,B] <- tryCatch({ edgeR::estimateDisp(Y[,batch==B & sample.type=='sc'],as.matrix(rep(1,sum(batch==B & sample.type=='sc'))),
@@ -561,13 +576,13 @@ best.psi <- psi
 
 # recalculate working vector and weight
 lmu.hat    <- gmean + Mb[,apply(M,1,which)] + alpha %*% t(W) 
- if(!is.null(batch)) {
+ if(nbatch>1) {
   if(!any(pi0>0)) 
     temp <- dnbinom(Y,mu=exp(lmu.hat),size=sweep(1/psi[,batch],2,ncells,'*'),log=TRUE)
   if(any(pi0>0)) 
     temp <- ZIM::dzinb(Y,lambda=exp(lmu.hat),k=sweep(1/psi[,batch],2,ncells,'*'),omega=outer(pi0,zeroinf),log=TRUE)
  }
- if(is.null(batch)) {
+ if(nbatch==1) {
   if(!any(pi0>0)) 
    temp <- dnbinom(Y,mu=exp(lmu.hat),size=outer(1/psi,ncells,'*'),log=TRUE)
   if(any(pi0>0))
@@ -599,6 +614,14 @@ Y  <- Matrix::Matrix(Y,sparse=TRUE)
 if(any(pi0>0)) {
  pi0<- outer(pi0,as.numeric(zeroinf))
  pi0<- Matrix::Matrix(pi0,sparse=TRUE)
+}
+# if using pseudosample, remove columns/rows/vector element associated with pseudosamples
+if(use.pseudosample) { 
+  Y <- Y[,1:nsc.org]
+  W <- as.matrix(W[1:nsc.org,])
+  M <- M[1:nsc.org,]
+  psi <- psi[,1:nbatch.org]
+  batch <- batch[1:nsc.org]
 }
 #output
 return( list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"Mb"=Mb, "gmean"=gmean,"pi0"=pi0,

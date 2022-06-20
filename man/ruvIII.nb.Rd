@@ -20,7 +20,6 @@ ruvIII.nb(
   ncores = 2,
   use.pseudosample = FALSE,
   nc.pool = 20,
-  strata = NULL,
   batch.disp = FALSE,
   zeroinf = NULL
 )
@@ -42,8 +41,7 @@ ruvIII.nb(
 
 \item{lambda.b}{smoothing parameter for regularizing the gene-level intercepts. The default is 16.}
 
-\item{batch}{numeric vector containing batch information for each cell. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is
-fitted AND/OR use.pseudosamples=TRUE.}
+\item{batch}{numeric vector containing batch information for each cell. Must correspond to columns of count matrix. If not supplied, cells are assumed to come from one batch.}
 
 \item{step.fac}{multiplicative factor to decrease IRLS step by when log-likelihood diverges. Default is 0.5}
 
@@ -53,19 +51,16 @@ fitted AND/OR use.pseudosamples=TRUE.}
 
 \item{ncores}{The number of cores used for parallel processing. The default number of workers (cores) is 2.}
 
-\item{use.pseudosample}{whether to use pseudocell to define replicates (default is FALSE). Note that the replicates defined by the pseudocells will be used in addition to any replicates defined by the M matrix above. If no replicate is defined by the M matrix (ie M matrix is an identity matrix) then the unwanted variation will be estimated using the pseudoreplicates defined by the pseudocells only. We recommend that use.pseudosample=TRUE be used only for data with UMI.}
+\item{use.pseudosample}{whether to use pseudocell to define replicates (default is FALSE). Note that the replicates defined by the pseudocells will be used in addition to any replicates defined by the M matrix above. We recommend that use.pseudosample=TRUE be used only for data with UMI.}
 
 \item{nc.pool}{the number of cells per pool (used for defining pseudocells). The default is 20. Only relevant when use.pseudosample=TRUE.}
 
-\item{strata}{By default the creation of pseudo-samples are stratified by batch and library size ONLY. This default strategy should work well if the biological factor of
-interest is not correlated with batch. If they are correlated, this strategy will risk removing too much biology. Specifying the biological factor as 'strata' variable helps reducing the amount of biology removed.}
-
-\item{batch.disp}{whether to fit batch-speficic dispersion parameter for each gene. The default is FALSE.}
+\item{batch.disp}{whether to fit batch-specific dispersion parameter for each gene. The default is FALSE.}
 
 \item{zeroinf}{logical vector indicating whether to fit zero-inflated negative binomial (ZINB) instead of NB model (the default) for some/all cells. The length of the vector #'        must equal the number of cells. We recommend that non-UMI data be fitted using ZINB and UMI data be fitted using NB model.}
 }
 \value{
-A list containing the raw data (as sparse matrix), the unwanted factors and regression coefficients associated with the unwanted factors.
+A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
 }
 \description{
 This function performs ruvIIInb method to remove unwanted variation from sequencing count data. The method has been applied to single-cell RNA-seq data but in principle it is applicable to count data from any sequencing platforms. It takes raw count matrix with features (genes/transcript in scRNA-seq) as rows and samples (cells in scRNA-seq) as columns.

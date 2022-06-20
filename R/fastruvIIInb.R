@@ -1,6 +1,6 @@
 #' Removing unwanted variation from sequencing count data 
 #'
-#' This function performs fast version of ruvIIInb method to remove unwanted variation from sequencing count data. Currently, only Negative Binomial model is implemented. It takes raw count matrix with features (genes/transcript in scRNA-seq) as rows and samples (cells in scRNA-seq) as columns. 
+#' This function performs fast version of ruvIIInb method to remove unwanted variation from sequencing count data. Currently, only Negative Binomial model for UMI data is supported. It takes raw count matrix with features (genes/transcript in scRNA-seq) as rows and samples (cells in scRNA-seq) as columns. 
 #' Users need to specify the set of negative control genes (i.e genes where the between cells variation is assumed to be solely due to the unwanted variation) 
 #' and the (pseudo)replicate matrix that define sets of cells that can be considered technical replicates.
 #'
@@ -12,23 +12,20 @@
 #' @param ortho.W logical value. Whether the unwanted factors (W) are to be orthogonalized. The default is FALSE.
 #' @param lambda.a smoothing parameter for regularizing regression coefficients associated with W. The default is 0.01
 #' @param lambda.b smoothing parameter for regularizing the gene-level intercepts. The default is 16.
-#' @param batch numeric vector containing batch information for each cell. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is
-#'        fitted AND/OR use.pseudosamples=TRUE.
+#' @param batch numeric vector containing batch information for each cell. Must correspond to columns of count matrix. If not supplied, cells are assumed to come from one batch.
 #' @param step.fac multiplicative factor to decrease IRLS step by when log-likelihood diverges. Default is 0.5
 #' @param inner.maxit the maximum number of IRLS iteration for estimating mean parameters for a given dispersion parameter. Default is 50
 #' @param outer.maxit the maximum number of IRLS iteration. Default is 25 
 #' @param ncores The number of cores used for parallel processing. The default number of workers (cores) is 2.
-#' @param use.pseudosample whether to use pseudocell to define replicates (default is FALSE). Note that the replicates defined by the pseudocells will be used in addition to any replicates defined by the M matrix above. If no replicate is defined by the M matrix (ie M matrix is an identity matrix) then the unwanted variation will be estimated using the pseudoreplicates defined by the pseudocells only. We recommend that use.pseudosample=TRUE be used only for data with UMI.
+#' @param use.pseudosample whether to use pseudocells to define replicates (default is FALSE). Note that the replicates defined by the pseudocells will be used in addition to any replicates defined by the M matrix above. We recommend that use.pseudosample=TRUE be used only for data with UMI.
 #' @param nc.pool the number of cells per pool (used for defining pseudocells). The default is 20. Only relevant when use.pseudosample=TRUE.
-#' @param strata By default the creation of pseudo-samples are stratified by batch and library size ONLY. This default strategy should work well if the biological factor of 
-#'        interest is not associated with batch. If they are associated, this strategy will risk removing too much biology. Specifying the biological factor as 'strata' variable helps reducing the amount of biology removed.
-#' @param batch.disp whether to fit batch-speficic dispersion parameter for each gene. The default is FALSE.
-#' @param pCells.touse the proportion of cells used to estimate alpha and dispersion parameter (for speed-up). Default=20%.
+#' @param batch.disp whether to fit batch-specific dispersion parameter for each gene. The default is FALSE.
+#' @param pCells.touse the proportion of cells used to estimate alpha and dispersion parameter (Default=20%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10% of the original subset of cells will be used to estimate alpha.
   
-#' @return A list containing the raw data (as sparse matrix), the unwanted factors and regression coefficients associated with the unwanted factors.
+#' @return A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
 #' @export
 fastruvIII.nb <- function(Y,M,ctl,k=2,robust=FALSE,ortho.W=FALSE,lambda.a=0.01,lambda.b=16,batch=NULL,step.fac=0.5,inner.maxit=50,outer.maxit=25,
-        ncores=2,use.pseudosample=FALSE,nc.pool=20,strata=NULL,batch.disp=FALSE,pCells.touse=0.2) {
+        ncores=2,use.pseudosample=FALSE,nc.pool=20,batch.disp=FALSE,pCells.touse=0.2) {
 
 # register parallel backend
 #register(BPPARAM)
@@ -50,9 +47,11 @@ mode(M) <- 'logical'
 
 #format and convert M matrix into list of indices to save space
 rep.ind <- apply(M,2,which)
+# define strata as columns of M matrix for which a cell is part of
+strata <- apply(M,1,which)
 
 # force Y to DelayedMatrix object
-if(class(Y)!='DelayedMatrix')
+if(!any(class(Y)=='DelayedMatrix'))
   Y <- DelayedArray::DelayedArray(Y)
 
 # Winsorize gene-by-gene and calculate size-factor
@@ -71,19 +70,16 @@ if(any(zero.genes)) {
    print(paste0(sum(zero.genes), 'genes with all zero counts are removed following a Winsorization step.'))
 }
 
-
 # if no batch info is supplied but batch.disp=TRUE, forced batch.disp=FALSE
 if(is.null(batch) & batch.disp) {
   print(paste0('Batch variable not supplied...cannot fit batch-specific dispersion parameter.'))
   batch.disp <- FALSE
 }
 
-# use.pseudosample not available for HDF5Matrix input
-if(use.pseudosample) {
-  if(class(Y)=='DelayedMatrix') {
-   print('Pseudo-sample (cell) feature is not available for DelayedMatrix input. Proceeding with use.pseudosample=FALSE')
-   use.pseudosample <- FALSE
-  }
+# if no batch info is supplied, assumes cells come from one batch
+if(is.null(batch)) {
+  print(paste0('Batch variable not supplied...assuming cells come from one batch'))
+  batch <- rep(1,ncol(Y))
 }
 
 # get Huber's k
@@ -98,19 +94,94 @@ if(length(rep.ind)>1) {
 }
 subsamples <- sort(subsamples)
 Ysub  <- as.matrix(Y[,subsamples])
-
-off.g  <- log(DelayedMatrixStats::rowMeans2(Ysub))
-
-# initiate W by performing SVD on the control log(Yc+1)
-Y.norm <- sweep(Ysub,1,exp(off.g),'/')
-# determine the number of blocks
-#nblock <- ceiling(ns*ngene/1e+08)
-#cell.blocks <- round(seq(0,ns,length=nblock+1))
-#gene.blocks <- round(seq(0,ngene,length=nblock+1))
-Wsub <- irlba::irlba(log(as.matrix(Y.norm[ctl,])+1),nv=k)$v
 Msub <- as.matrix(M[subsamples,])
 rep.sub <- apply(Msub,2,which)
 sub.batch <- batch[subsamples]
+if(!is.null(strata)) 
+ strata <- strata[subsamples]
+
+# adding pseudosamples
+sf <- colSums(Ysub)
+sf <- sf/mean(sf) 
+sample.type <- rep('sc',ncol(Ysub))
+# number of batches before pseudocells addition
+nbatch.org <- ifelse(is.null(sub.batch),1,length(unique(sub.batch)))
+# if batch.disp=FALSE,force nbatch.org==1
+nbatch.org <- ifelse(!batch.disp,1,nbatch.org)
+
+# number of single cells before pseudocells addition
+nsub <- ncol(Ysub)
+if(use.pseudosample) {
+ if(is.null(strata)) {
+   batch.ext <- sub.batch
+   for(btc in unique(sub.batch)) {
+    nq  <- max(round(sum(batch==btc)/nc.pool),1)
+    qsf <-  as.numeric(gtools::quantcut(sf[sub.batch==btc],q=nq))
+    for(q in 1:max(qsf)) {
+       pool <- Ysub[,1:nsub][,sub.batch==btc][,qsf==q]
+       dns.pool <- rbinom(nrow(pool),size=rowSums(pool),prob=1/ncol(pool))
+       Ysub <- cbind(Ysub,dns.pool)
+       sample.type <- c(sample.type,'sc')
+       batch.ext  <- c(batch.ext,btc+max(sub.batch))
+       Msub      <- rbind(Msub,FALSE)
+    }
+   }
+ ps.mcol <- rep(FALSE,nrow(Msub))
+ ps.mcol[seq(nsub+1,ncol(Ysub),1)] <- TRUE
+ Msub <- cbind(Msub,ps.mcol)
+ sub.batch <- batch.ext
+ }
+
+ if(!is.null(strata)) {
+  batch.ext <- sub.batch
+  for(st in unique(na.omit(strata))) {
+    for(btc in unique(sub.batch)) {
+     nq  <- max(round(sum(sub.batch==btc & strata==st,na.rm=TRUE)/nc.pool),1)
+     if(sum(sub.batch==btc & strata==st, na.rm=TRUE)>1) {
+      qsf <-  na.omit(as.numeric(gtools::quantcut(sf[sub.batch==btc & strata==st],q=nq)))
+      for(q in 1:max(qsf)) {
+       pool <- Ysub[,1:nsub][,sub.batch==btc & strata==st & !is.na(strata)][,qsf==q]
+       dns.pool <- rbinom(nrow(pool),size=rowSums(pool),prob=1/ncol(pool))
+       Ysub <- cbind(Ysub,dns.pool)
+       sample.type <- c(sample.type,'sc')
+       batch.ext  <- c(batch.ext,btc+max(sub.batch))
+       ps.mrow <- rep(FALSE,ncol(Msub)) 
+       ps.mrow[st] <- TRUE
+       Msub    <- rbind(Msub,ps.mrow)
+      }
+     } #if
+    } #for batch
+  } # for st
+ if(!batch.disp) 
+   batch.ext <- ifelse(batch.ext>max(sub.batch),2,1)
+   
+ sub.batch <- batch.ext
+
+ } # if
+}
+nbatch <- ifelse(is.null(sub.batch),1,length(unique(sub.batch)))
+
+subsamples.org     <- subsamples
+subsubsamples.org  <- 1:nsub
+if(use.pseudosample) {
+ # here, we take only 10% of the original subsampled cells + all pseudocells
+ subsamples.org     <- subsamples
+ subsubsamples.org  <- sort(sample(nsub,size=round(0.1*nsub)))
+ subsamples         <- c(subsubsamples.org,(nsub+1):ncol(Ysub))
+
+ Ysub <- Ysub[,subsamples]
+ Msub <- as.matrix(Msub[subsamples,])
+ rep.sub <- apply(Msub,2,which)
+ sub.batch <- sub.batch[subsamples]
+ nsub <- ncol(Ysub)
+}
+
+
+# initiate W by performing SVD on the control log(Yc+1)
+off.g  <- log(DelayedMatrixStats::rowMeans2(Ysub))
+Y.norm <- sweep(Ysub,1,exp(off.g),'/')
+# determine the number of blocks
+Wsub <- irlba::irlba(log(as.matrix(Y.norm[ctl,])+1),nv=k)$v
 nsub <- ncol(Ysub)
 
 # initiate beta and alpha: by performing poisson GLM gene-by-gene
@@ -118,7 +189,6 @@ nW   <- ncol(Wsub)
 nM   <- ncol(M)
 ngene<- nrow(Y)
 ns   <- ncol(Y)
-ncells <- rep(1,ncol(Y))
 
 bef   <- Sys.time()
 coef <- foreach(i=1:ngene, .combine=cbind, .packages="Rfast") %dopar% {
@@ -156,9 +226,9 @@ Wa   <- Matrix::tcrossprod(alpha,Wsub)
 offs <- Wa + Mb[,apply(Msub,1,which)] 
 bef  <- Sys.time()
 if(parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi <- estimateDisp.par(Ysub,as.matrix(rep(1,nsub)),offset=offs,tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi <- estimateDisp.par(Ysub[,sub.batch==1],as.matrix(rep(1,sum(sub.batch==1))),
 				offset=offs[,sub.batch==1],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
   for(B in 2:max(batch)) 
@@ -167,9 +237,9 @@ if(parallel) {
  }
 } 
 if(!parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi <- edgeR::estimateDisp(Ysub,as.matrix(rep(1,nsub)),offset=offs,tagwise=TRUE,robust=TRUE)$tagwise.dispersion
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi <- edgeR::estimateDisp(Ysub[,sub.batch==1],as.matrix(rep(1,sum(sub.batch==1))),
 				offset=offs[,sub.batch==1],tagwise=TRUE,robust=TRUE)$tagwise.dispersion
   for(B in 2:max(batch)) 
@@ -192,14 +262,14 @@ while(!conv) {
  
  ### calculate initial loglik
  lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] +  Matrix::tcrossprod(alpha,Wsub) 
- if(!is.null(batch)) {
+ if(nbatch>1) {
   temp <- foreach(i=1:ngene, .combine=c) %dopar% {
     tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i,sub.batch],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
  } 
- if(is.null(batch)) {
+ if(nbatch==1) {
   temp <- foreach(i=1:ngene, .combine=c) %dopar% {
     tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
@@ -222,17 +292,17 @@ while(!conv) {
  lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] + Matrix::tcrossprod(alpha,Wsub) 
 
  # weight based on NB
- if(!is.null(batch))
+ if(nbatch>1)
   sig.inv<- 1/(exp(-lmu.hat) + sweep(psi[,sub.batch],2,rep(1,nsub),'/'))
- if(is.null(batch))
+ if(nbatch==1)
   sig.inv<- 1/(exp(-lmu.hat) +outer(psi,rep(1,nsub),'/'))
  
  # calculate signed deviance
- if(!is.null(batch) & robust) {
+ if(nbatch>1 & robust) {
    signdev <- sign(Ysub-exp(lmu.hat))* sqrt(2*(dnbinom(Ysub,mu=Ysub,size=sweep(1/psi[,sub.batch],2,rep(1,nsub),'*'),log=TRUE) - 
 						dnbinom(Ysub,mu=exp(lmu.hat),size=sweep(1/psi[,sub.batch],2,rep(1,nsub),'*'),log=TRUE) ))
  }
- if(is.null(batch) & robust) {
+ if(nbatch==1 & robust) {
    signdev <- sign(Ysub-exp(lmu.hat))* sqrt(2*(dnbinom(Ysub,mu=Ysub,size=outer(1/psi,rep(1,nsub),'*'),log=TRUE) - 
 						dnbinom(Ysub,mu=exp(lmu.hat),size=outer(1/psi,rep(1,nsub),'*'),log=TRUE) ))
  }  
@@ -274,7 +344,6 @@ while(!conv) {
  }
  aft   <- Sys.time()
  #print(paste0('time to calculate ameans:',  difftime(aft,bef,units='secs')))
- #print(dim(results))
 
  if(k>1) {
   alpha.mean <- solve(as.matrix(apply(results[,1:nW,],c(1,2),sum)),as.matrix(apply(results[,nW+1,],1,sum)))
@@ -284,8 +353,6 @@ while(!conv) {
   alpha.mean <- c(sum(results[,(nW+1),])/sum(results[,1:nW,]))
   A <- results[,1:nW,,drop=FALSE]
  }
- #print(dim(A))
- #print(dim(b))
  # get alpha dev
  acomb2 <- function(...) abind::abind(..., along=2)
  bef=Sys.time()
@@ -394,14 +461,14 @@ while(!conv) {
 
  # calculate current logl
  lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] +  Matrix::tcrossprod(alpha,Wsub) 
- if(!is.null(batch)) {
+ if(nbatch>1) {
   temp <- foreach(i=1:ngene, .combine=c) %dopar% {
     tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i,sub.batch],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
  } 
- if(is.null(batch)) {
+ if(nbatch==1) {
   temp <- foreach(i=1:ngene, .combine=c) %dopar% {
     tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
@@ -452,10 +519,10 @@ Wa =  Matrix::tcrossprod(best.a,best.W)
 offs <- Wa + best.Mb[,apply(Msub,1,which)] 
 if(updt.psi) {
 if(parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi.new <- tryCatch({ estimateDisp.par(Ysub,as.matrix(rep(1,nsub)),offset=offs,
 				tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion}, error = function(e) {NA})
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi.new <- psi
   for(B in 1:max(batch)) 
    psi.new[,B]<-tryCatch({estimateDisp.par(Ysub[,sub.batch==B],as.matrix(rep(1,sum(sub.batch==B))),
@@ -464,9 +531,9 @@ if(parallel) {
 }
 
 if(!parallel) {
- if(is.null(batch)) 
+ if(nbatch==1) 
   psi.new <- tryCatch({ edgeR::estimateDisp(Ysub,as.matrix(rep(1,nsub)),offset=offs,tagwise=TRUE,robust=TRUE)$tagwise.dispersion},error = function(e) {NA})
- if(!is.null(batch)) {
+ if(nbatch>1) {
   psi.new <- psi
   for(B in 1:max(batch)) 
    psi.new[,B] <- tryCatch({ edgeR::estimateDisp(Ysub[,sub.batch==B],as.matrix(rep(1,sum(sub.batch==B))),
@@ -488,14 +555,14 @@ best.psi <- psi
 
 # recalculate logl
 lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] +  Matrix::tcrossprod(alpha,Wsub) 
-if(!is.null(batch)) {
+if(nbatch>1) {
   temp <- foreach(i=1:ngene, .combine=c) %dopar% {
     tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i,sub.batch],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
 } 
-if(is.null(batch)) {
+if(nbatch==1) {
   temp <- foreach(i=1:ngene, .combine=c) %dopar% {
     tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
@@ -517,14 +584,14 @@ if(conv) {
  # estimate W for all samples (initial)
  print('Estimating W for all samples...')
  bef=Sys.time()
- W <- matrix(0,ncol(Y),nW)
- W[subsamples,] <- Wsub
+ W <- matrix(0,ns,nW)
+ W[subsamples.org[subsubsamples.org],] <- Wsub[1:length(subsubsamples.org),]
  W <- foreach(i=1:ns, .combine=cbind, .packages="Matrix") %dopar% { 
   out <- rep(0,k)
   lmu  <- gmean + Mb[,which(M[i,])] + alpha %*% as.matrix(W[i,])
-  if(!is.null(batch))
+  if(nbatch>1)
    wtvec<- c(1/(exp(-lmu) + psi[,batch[i]]))
-  if(is.null(batch))
+  if(nbatch==1)
    wtvec<- c(1/(exp(-lmu) + psi))
   wtvec <- wtvec/mean(wtvec)
 
@@ -558,9 +625,9 @@ if(conv) {
    out <- rep(0,k)
    lmu  <- gmean + Mb[,which(M[i,])] + alpha %*% as.matrix(W[i,])
    Zctl<-  lmu[ctl] + ( (Y[ctl,i]+0.01)/(exp(lmu[ctl])+0.01) - 1)
-   if(!is.null(batch))
+   if(nbatch>1)
     wtvec<- c(1/(exp(-lmu) + psi[,batch[i]]))
-   if(is.null(batch))
+   if(nbatch==1)
     wtvec<- c(1/(exp(-lmu) + psi))
    wtvec <- wtvec/mean(wtvec)
    out[1] <- Rfast::lmfit(y=Zctl-gmean[ctl],x=alpha[ctl,1],w=wtvec[ctl])$be
@@ -595,16 +662,20 @@ if(conv) {
 
 # calibrate alpha and W
 for(k in 1:nW) {
- ab.W     <- Rfast::lmfit(y=Wsub[,k],x=cbind(1,W[subsamples,k]))$be
+ ab.W     <- Rfast::lmfit(y=Wsub[1:length(subsubsamples.org),k],x=cbind(1,W[subsamples.org[subsubsamples.org],k]))$be
  ab.alpha <- Rfast::lmfit(y=best.a[,k],x=cbind(1,alpha[,k]))$be
  W[,k]    <- ab.W[1] + ab.W[2]*W[,k]
  alpha[,k]<- ab.alpha[1] + ab.alpha[2]*alpha[,k]
 }
 #alpha <- sweep(alpha,2,scfac.alpha,'/')
-cor.check <- diag(cor(Wsub,W[subsamples,]))
+cor.check <- diag(as.matrix(cor(Wsub[1:length(subsubsamples.org),],W[subsamples.org[subsubsamples.org],])))
+
+if(use.pseudosample) { 
+   psi <- psi[,1:nbatch.org]
+}
 #output
-return( list("counts"=Y,"W"=W, "Wsub"=Wsub,"M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"asub"=best.a,"Mb"=Mb, "gmean"=gmean,
-		"psi"=psi,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch,sub=subsamples,corW=cor.check) )
+return( list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"Mb"=Mb, "gmean"=gmean,
+		"psi"=psi,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch,corW=cor.check) )
 }
 
 #### Helpers functions ######################################################################################

@@ -14,7 +14,7 @@ makeSCE(obj, cData = NULL, batch = NULL)
 \item{batch}{numeric vector containing batch information for each sample. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.}
 }
 \value{
-A SingleCellExperiment object with normalized data added to the 'assays' slot. The log percentile-adjusted count is stored in the 'logcorrected' component of the 'assays' slot and the Pearson residuals is in the 'pearson' component.
+A SingleCellExperiment object with normalized data added to the 'assays' slot. The log percentile-adjusted count is stored in the 'logPAC' component of the 'assays' slot and the Pearson residuals is in the 'pearson' component.
 }
 \description{
 This function takes ruvIII.nb or fastruvIII.nb output as input and creates a SingleCellExperiment (SCE) object containing various metrics of normalized data.
