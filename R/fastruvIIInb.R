@@ -586,27 +586,35 @@ if(conv) {
  bef=Sys.time()
  W <- matrix(0,ns,nW)
  W[subsamples.org[subsubsamples.org],] <- Wsub[1:length(subsubsamples.org),]
- W <- foreach(i=1:ns, .combine=cbind, .packages="Matrix") %dopar% { 
-  out <- rep(0,k)
-  lmu  <- gmean + Mb[,which(M[i,])] + alpha %*% as.matrix(W[i,])
-  if(nbatch>1)
-   wtvec<- c(1/(exp(-lmu) + psi[,batch[i]]))
-  if(nbatch==1)
-   wtvec<- c(1/(exp(-lmu) + psi))
-  wtvec <- wtvec/mean(wtvec)
-
-  Zctl   <- lmu[ctl] + ( (Y[ctl,i]+0.01)/(exp(lmu[ctl])+0.01) - 1)
-  out[1] <- Rfast::lmfit(y=Zctl-gmean[ctl],x=alpha[ctl,1],w=wtvec[ctl])$be
-  if(k>1) {
+ nb    <- ceiling(ncol(Y)/5000)
+ for(block in 1:nb) {
+  start.idx <- (block-1)*5000+1 ; end.idx <- min(ns,block*5000)
+  Ysub  <- as.matrix(Y[,start.idx:end.idx])
+  ns.sub<- ncol(Ysub)
+  sub.out <- foreach(i=1:ns.sub, .combine=cbind, .packages="Matrix") %dopar% { 
+   out <- rep(0,k)
+   lmu  <- gmean + Mb[,which(M[start.idx+i-1,])] + alpha %*% as.matrix(W[start.idx+i-1,])
+   Zctl<-  lmu[ctl] + ( (Ysub[ctl,i]+0.01)/(exp(lmu[ctl])+0.01) - 1)
+   if(nbatch>1)
+    wtvec<- c(1/(exp(-lmu) + psi[,batch[start.idx+i-1]]))
+   if(nbatch==1)
+    wtvec<- c(1/(exp(-lmu) + psi))
+   wtvec <- wtvec/mean(wtvec)
+   out[1] <- Rfast::lmfit(y=Zctl-gmean[ctl],x=alpha[ctl,1],w=wtvec[ctl])$be
+   if(k>1) {
     for(j in 2:k) {
       out[j] <- Rfast::lmfit(y=Zctl-gmean[ctl]-matrixStats::rowSums2(as.matrix(alpha[ctl,1:(j-1)]) %*% as.matrix(out[1:(j-1)])),x=alpha[ctl,j],w=wtvec[ctl])$be
     } 
+   }
+   as.matrix(out)
   }
-  as.matrix(out)
- }
- W <- as.matrix(W)
+  if(ncol(sub.out)!=k)
+   sub.out <- t(sub.out)
+  W[start.idx:end.idx,] <- sub.out
+  } 
+ 
  if(ncol(W)!=k) 
-  W <- t(W)
+   W <- t(W)
 
  # normalize W and alpha
  calnorm.W <- sqrt(matrixStats::colSums2(W^2))
@@ -621,24 +629,31 @@ if(conv) {
  conv.W <- FALSE
  while(!conv.W) {
   W.old <- W
-  W <- foreach(i=1:ns, .combine=cbind, .packages="Matrix") %dopar% { 
-   out <- rep(0,k)
-   lmu  <- gmean + Mb[,which(M[i,])] + alpha %*% as.matrix(W[i,])
-   Zctl<-  lmu[ctl] + ( (Y[ctl,i]+0.01)/(exp(lmu[ctl])+0.01) - 1)
-   if(nbatch>1)
-    wtvec<- c(1/(exp(-lmu) + psi[,batch[i]]))
-   if(nbatch==1)
-    wtvec<- c(1/(exp(-lmu) + psi))
-   wtvec <- wtvec/mean(wtvec)
-   out[1] <- Rfast::lmfit(y=Zctl-gmean[ctl],x=alpha[ctl,1],w=wtvec[ctl])$be
-   if(k>1) {
+  for(block in 1:nb) {
+   start.idx <- (block-1)*5000+1 ; end.idx <- min(ns,block*5000)
+   Ysub  <- as.matrix(Y[,start.idx:end.idx])
+   ns.sub<- ncol(Ysub)
+   sub.out <- foreach(i=1:ns.sub, .combine=cbind, .packages="Matrix") %dopar% { 
+    out <- rep(0,k)
+    lmu  <- gmean + Mb[,which(M[start.idx+i-1,])] + alpha %*% as.matrix(W[start.idx+i-1,])
+    Zctl<-  lmu[ctl] + ( (Ysub[ctl,i]+0.01)/(exp(lmu[ctl])+0.01) - 1)
+    if(nbatch>1)
+     wtvec<- c(1/(exp(-lmu) + psi[,batch[start.idx+i-1]]))
+    if(nbatch==1)
+     wtvec<- c(1/(exp(-lmu) + psi))
+    wtvec <- wtvec/mean(wtvec)
+    out[1] <- Rfast::lmfit(y=Zctl-gmean[ctl],x=alpha[ctl,1],w=wtvec[ctl])$be
+    if(k>1) {
      for(j in 2:k) {
        out[j] <- Rfast::lmfit(y=Zctl-gmean[ctl]-matrixStats::rowSums2(as.matrix(alpha[ctl,1:(j-1)]) %*% as.matrix(out[1:(j-1)])),x=alpha[ctl,j],w=wtvec[ctl])$be
      } 
+    }
+    as.matrix(out)
    }
-   as.matrix(out)
-  }
-  W <- as.matrix(W)
+   if(ncol(sub.out)!=k)
+    sub.out <- t(sub.out)
+   W[start.idx:end.idx,] <- sub.out
+  } 
   if(ncol(W)!=k) 
    W <- t(W)
 
@@ -651,9 +666,13 @@ if(conv) {
   if(nW>1 & ortho.W)  
     W <- matlib::GramSchmidt(W) 
 
+  # fixed the sign of W
+  for(i in 1:ncol(W)) 
+   W[,i] <- W[,i] * sign(cor(W[subsamples.org[subsubsamples.org],i],Wsub[1:length(subsubsamples.org),i]))
+
   crit.W <- mean( (abs(W-W.old)/abs(W.old))^2)
   #print(round(crit.W,10))
-  conv.W <- crit.W< 1e-6
+  conv.W <- crit.W< 1e-5
  }
  aft=Sys.time()
  #print(paste0('Time to estimate W for all samples:',difftime(aft,bef,units='secs')))
