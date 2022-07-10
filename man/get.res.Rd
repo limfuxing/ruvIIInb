@@ -4,7 +4,7 @@
 \alias{get.res}
 \title{Produce normalized count data after adjusting for unwanted variations}
 \usage{
-get.res(out, type = "pearson", batch = NULL)
+get.res(out, type = c("logcounts", "pearson", "quantile"), batch = NULL)
 }
 \arguments{
 \item{out}{output of call to ruvIII.nb or fastruvIII.nb function.}

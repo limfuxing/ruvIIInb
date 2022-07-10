@@ -8,22 +8,19 @@
 
 #' @return A SingleCellExperiment object with normalized data added to the 'assays' slot. The log percentile-adjusted count is stored in the 'logPAC' component of the 'assays' slot and the Pearson residuals is in the 'pearson' component.
 
-makeSCE<-function (obj, cData=NULL, batch = NULL) #pseudo.cells=FALSE 
+makeSCE<-function (obj, cData=NULL, batch = NULL)
 {
-  if (class(obj$counts)[1] != "matrix") {
-    obj$counts <- as.matrix(obj$counts)
-  }
-#  cData$logLS <- log10(colSums(obj$counts))
+  #require(doParallel)
+  #doParallel::registerDoParallel(ncores)
+
   batch<-obj$batch
-  data.norm <- get.res(obj, type = "logcounts", batch = batch)
+  data.norm <- get.res(obj,type='logcounts',batch = batch)
+  gc(verbose=FALSE)
   sce.obj <- SingleCellExperiment::SingleCellExperiment(assays = list(counts = obj$counts,
                                                                       logcounts = data.norm), 
                                                         colData = cData)
-  assays(sce.obj, withDimnames=FALSE)$pearson <- get.res(obj, type = "pearson", 
-                                                         batch = batch)
-  
-  assays(sce.obj, withDimnames=FALSE)$logPAC <- log(get.res(obj, type = "quantile", 
-                                                                  batch = batch) + 1)
-  
+  assays(sce.obj, withDimnames=FALSE)$pearson <- get.res(obj,type='pearson',batch = batch)
+  assays(sce.obj, withDimnames=FALSE)$logPAC <- log(get.res(obj,type='quantile',batch = batch)+1)
+
   sce.obj
   }

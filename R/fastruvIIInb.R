@@ -586,9 +586,11 @@ if(conv) {
  bef=Sys.time()
  W <- matrix(0,ns,nW)
  W[subsamples.org[subsubsamples.org],] <- Wsub[1:length(subsubsamples.org),]
- nb    <- ceiling(ncol(Y)/5000)
+ # block size variable
+ block.size <- min(5000,ncol(Y))
+ nb    <- ceiling(ncol(Y)/block.size)
  for(block in 1:nb) {
-  start.idx <- (block-1)*5000+1 ; end.idx <- min(ns,block*5000)
+  start.idx <- (block-1)*block.size+1 ; end.idx <- min(ns,block*block.size)
   Ysub  <- as.matrix(Y[,start.idx:end.idx])
   ns.sub<- ncol(Ysub)
   sub.out <- foreach(i=1:ns.sub, .combine=cbind, .packages="Matrix") %dopar% { 
@@ -630,7 +632,7 @@ if(conv) {
  while(!conv.W) {
   W.old <- W
   for(block in 1:nb) {
-   start.idx <- (block-1)*5000+1 ; end.idx <- min(ns,block*5000)
+   start.idx <- (block-1)*block.size+1 ; end.idx <- min(ns,block*block.size)
    Ysub  <- as.matrix(Y[,start.idx:end.idx])
    ns.sub<- ncol(Ysub)
    sub.out <- foreach(i=1:ns.sub, .combine=cbind, .packages="Matrix") %dopar% { 

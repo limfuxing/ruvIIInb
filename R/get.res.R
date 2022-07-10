@@ -7,82 +7,91 @@
 #' @param batch numeric vector containing batch information for each sample.Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.
 
 #' @return A matrix containing the normalized data
-get.res<-function (out, type = "pearson", batch = NULL) 
+get.res<-function (out, type = c("logcounts","pearson","quantile"), batch = NULL) 
 {
-  Y <- out$counts
-    if (class(Y)[1] != "matrix") {
-      
-    Y <- as.matrix(Y)
-  }
-  if (class(out$pi0) != "matrix" & !is.null(dim(out$pi0))) {
-    out$pi0 <- as.matrix(out$pi0)
-  }
+ Y <- out$counts
 
-  Wa <- Matrix::tcrossprod(out$a,out$W)
+ if (class(out$pi0) != "matrix" & !is.null(dim(out$pi0))) {
+  out$pi0 <- as.matrix(out$pi0)
+ }
+ require(DelayedArray)
+ ns    <- ncol(Y)
+ block.size <- min(5000,ncol(Y))
+ setAutoRealizationBackend("HDF5Array")
+ sink <- AutoRealizationSink(c(nrow(Y), ncol(Y)))
+ sink_grid <- RegularArrayGrid(dim(sink), spacings=c(nrow(sink),block.size))
+
+ nb    <- ceiling(ncol(out$counts)/block.size)
+ for (bid in seq_along(sink_grid)) {
+  viewport <- sink_grid[[bid]]
+  start.idx<- (bid-1)*block.size+1
+  end.idx  <- min(bid*block.size,ns) 
+  Ysub  <- as.matrix(Y[,start.idx:end.idx])
+  Wa <- Matrix::tcrossprod(out$a,out$W[start.idx:end.idx,])
   if(!is.null(dim(out$pi0))) 
    mu <- exp(Wa + out$gmean) * (1 - out$pi0)
   if(is.null(dim(out$pi0))) 
    mu <- exp(Wa + out$gmean) 
 
-  mu.full <- exp(Wa + out$gmean + out$Mb[,apply(out$M, 1, which)])
+  mu.full <- exp(Wa + out$gmean + out$Mb[,apply(out$M[start.idx:end.idx,], 1, which)])
   Wa.mean = out$a %*% as.matrix(colMeans(out$W))
   # fixed outlier genes
-  idx.gene <- abs(log(rowMeans(Y + 1)/rowMeans(mu + 1))) > log(5)
+  idx.gene <- abs(log(rowMeans(Ysub + 1)/rowMeans(mu + 1))) > log(5)
   if (sum(idx.gene) > 1) 
-    mu[idx.gene, ] <- rowMeans(Y[idx.gene, ])
+    mu[idx.gene, ] <- rowMeans(Ysub[idx.gene, ])
   if (sum(idx.gene) == 1) 
-    mu[idx.gene, ] <- mean(Y[idx.gene, ])
+    mu[idx.gene, ] <- mean(Ysub[idx.gene, ])
 
-  idx.gene <- abs(log(rowMeans(Y + 1)/rowMeans(mu.full + 1))) > log(5)
+  idx.gene <- abs(log(rowMeans(Ysub + 1)/rowMeans(mu.full + 1))) > log(5)
   if(!is.null(dim(out$pi0))) {
-   mu.full[idx.gene, ] <- Y[idx.gene, ] * (1 - out$pi0[idx.gene,])
+   mu.full[idx.gene, ] <- Ysub[idx.gene, ] * (1 - out$pi0[idx.gene,])
    mu <- mu/(1 - out$pi0)
   }
   if(is.null(dim(out$pi0))) {
-   mu.full[idx.gene, ] <- Y[idx.gene, ] 
+   mu.full[idx.gene, ] <- Ysub[idx.gene, ] 
   }
 
   # get Pearson residual
-  if (type == "pearson") {
+  if (any(type == "pearson")) {
     if (is.null(dim(out$psi))) {
       if(!is.null(dim(out$pi0))) 
-        dev <- (Y - mu * (1 - out$pi0))/sqrt(mu * (1 - out$pi0) *(1 + mu * (out$psi + out$pi0)))
+        dev <- (Ysub - mu * (1 - out$pi0))/sqrt(mu * (1 - out$pi0) *(1 + mu * (out$psi + out$pi0)))
       if(is.null(dim(out$pi0))) 
-        dev <- (Y - mu)/sqrt(mu *(1 + mu * out$psi))
+        dev <- (Ysub - mu)/sqrt(mu *(1 + mu * out$psi))
     }
 
     if (!is.null(dim(out$psi))) {
       if(!is.null(dim(out$pi0)))
-        dev <- (Y - mu * (1 - out$pi0))/sqrt(mu * (1 - out$pi0) *(1 + mu * (out$psi[, batch] + out$pi0)))
+        dev <- (Ysub - mu * (1 - out$pi0))/sqrt(mu * (1 - out$pi0) *(1 + mu * (out$psi[, batch] + out$pi0)))
       if(is.null(dim(out$pi0)))
-        dev <- (Y - mu)/sqrt(mu *(1 + mu * (out$psi[, batch])))
+        dev <- (Ysub - mu)/sqrt(mu *(1 + mu * (out$psi[, batch])))
     }
     lims <- quantile(c(dev), prob = c(5e-04, 0.9995), na.rm = T)
     dev[dev < lims[1]] <- lims[1]
     dev[dev > lims[2]] <- lims[2]
   }
-  if (type == "logcounts") {
+  if (any(type == "logcounts")) {
     if(!is.null(dim(out$pi0)))
       mu <- exp(Wa) * (1 - out$pi0)
     if(is.null(dim(out$pi0)))
       mu <- exp(Wa) 
-    dev <- log(Y/mu + 1)
+    dev <- log(Ysub/mu + 1)
   }
-  if (type == "quantile") {
-    mu.noUV <- exp(out$Mb[, apply(out$M, 1, which)] + out$gmean + c(Wa.mean))
-    idx.gene <- abs(log(rowMeans(Y + 1)/rowMeans(mu.noUV + 1))) > log(5)
+  if (any(type == "quantile")) {
+    mu.noUV <- exp(out$Mb[, apply(out$M[start.idx:end.idx,], 1, which)] + out$gmean + c(Wa.mean))
+    idx.gene <- abs(log(rowMeans(Ysub + 1)/rowMeans(mu.noUV + 1))) > log(5)
     if (sum(idx.gene) > 1) 
-      mu.noUV[idx.gene, ] <- rowMeans(Y[idx.gene, ])
+      mu.noUV[idx.gene, ] <- rowMeans(Ysub[idx.gene, ])
     if (sum(idx.gene) == 1) 
-      mu.noUV[idx.gene, ] <- mean(Y[idx.gene, ])
+      mu.noUV[idx.gene, ] <- mean(Ysub[idx.gene, ])
     if (is.null(dim(out$psi))) {
       if(!is.null(dim(out$pi0)))  {
-        a <- ZIM::pzinb(Y - 1, lambda = mu.full, k = 1/out$psi,omega = out$pi0)
-        b <- ZIM::pzinb(Y, lambda = mu.full, k = 1/out$psi,omega = out$pi0)
+        a <- ZIM::pzinb(Ysub - 1, lambda = mu.full, k = 1/out$psi,omega = out$pi0)
+        b <- ZIM::pzinb(Ysub, lambda = mu.full, k = 1/out$psi,omega = out$pi0)
       }
       if(is.null(dim(out$pi0)))  {
-        a <- pnbinom(Y - 1, mu = mu.full, size = 1/out$psi)
-        b <- pnbinom(Y, mu = mu.full, size = 1/out$psi)
+        a <- pnbinom(Ysub - 1, mu = mu.full, size = 1/out$psi)
+        b <- pnbinom(Ysub, mu = mu.full, size = 1/out$psi)
       }
       a[a > 0.999] <- 0.9985
       b[b > 0.999] <- 0.999
@@ -97,12 +106,12 @@ get.res<-function (out, type = "pearson", batch = NULL)
     }
     if (!is.null(dim(out$psi))) {
       if(!is.null(dim(out$pi0)))  {
-       a <- ZIM::pzinb(Y - 1, lambda = mu.full, k = 1/out$psi[,batch], omega = out$pi0)
-       b <- ZIM::pzinb(Y, lambda = mu.full, k = 1/out$psi[,batch], omega = out$pi0)
+       a <- ZIM::pzinb(Ysub - 1, lambda = mu.full, k = 1/out$psi[,batch], omega = out$pi0)
+       b <- ZIM::pzinb(Ysub, lambda = mu.full, k = 1/out$psi[,batch], omega = out$pi0)
       }
       if(is.null(dim(out$pi0)))  {
-       a <- pnbinom(Y - 1, mu = mu.full, size = 1/out$psi[,batch])
-       b <- pnbinom(Y, mu = mu.full, size = 1/out$psi[,batch])
+       a <- pnbinom(Ysub - 1, mu = mu.full, size = 1/out$psi[,batch])
+       b <- pnbinom(Ysub, mu = mu.full, size = 1/out$psi[,batch])
       }
       a[a > 0.999] <- 0.9985
       b[b > 0.999] <- 0.999
@@ -116,5 +125,9 @@ get.res<-function (out, type = "pearson", batch = NULL)
       }
     }
   }
-  dev
+  sink <- write_block(sink, viewport, dev)
+ } # end of block iteration
+ tmp <- as(sink, "DelayedArray")
+ tmp
 }
+
