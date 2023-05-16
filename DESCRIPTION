@@ -31,6 +31,7 @@ Imports: edgeR (>= 3.34.0), doParallel (>= 1.0.15),
         (>= 0.24)
 Suggests: knitr, rmarkdown
 VignetteBuilder: knitr
+biocViews:
 Depends: R (>= 4.1.0)
 NeedsCompilation: no
 Packaged: 2021-11-03 02:24:40 UTC; delivera.a
