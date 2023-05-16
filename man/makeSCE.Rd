@@ -9,7 +9,7 @@ makeSCE(obj, cData = NULL, batch = NULL)
 \arguments{
 \item{obj}{object containing output of call to ruvIII.nb or fastruvIII.nb function.}
 
-\item{cData}{A data frame containing cell-level metadata. This data frame will be used as 'colData' in the SingleCellExperiment object}
+\item{cData}{A data frame containing cell-level metadata. This data frame will be used as 'colData' in the SingleCellExperiment object and must be specified}
 
 \item{batch}{numeric vector containing batch information for each sample. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.}
 }

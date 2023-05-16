@@ -11,10 +11,10 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"), batch = NULL
 {
  Y <- out$counts
 
- if (class(out$pi0) != "matrix" & !is.null(dim(out$pi0))) {
+ if (!any( class(out$pi0) == "matrix") & !is.null(dim(out$pi0))) {
   out$pi0 <- as.matrix(out$pi0)
  }
- require(DelayedArray)
+ require(DelayedArray,quietly=TRUE)
  ns    <- ncol(Y)
  block.size <- min(5000,ncol(Y))
  setAutoRealizationBackend("HDF5Array")

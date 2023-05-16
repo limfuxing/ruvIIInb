@@ -7,7 +7,7 @@ function (y, design = NULL, group = NULL, lib.size = NULL, offset = NULL,
     grid.range = c(-10, 10), robust = FALSE, winsor.tail.p = c(0.05, 
         0.1), tol = 1e-06, weights = NULL, BPPARAM=BPPARAM, ...) 
 {
-    require(foreach)
+    require(foreach,quietly=TRUE)
     y <- as.matrix(y)
     ntags <- nrow(y)
     if (ntags == 0) 

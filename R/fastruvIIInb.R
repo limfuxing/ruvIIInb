@@ -33,8 +33,8 @@ fastruvIII.nb <- function(Y,M,ctl,k=2,robust=FALSE,ortho.W=FALSE,lambda.a=0.01,l
 # setup cluster for doParallel
 doParallel::registerDoParallel(ncores)
 BPPARAM=BiocParallel::DoparParam()
-require(doParallel)
-require(foreach)
+require(doParallel,quietly=TRUE)
+require(foreach,quietly=TRUE)
 parallel <- as.logical(ncores>1)
 
 if(!is.logical(ctl)) 
@@ -159,7 +159,7 @@ if(use.pseudosample) {
 
  } # if
 }
-nbatch <- ifelse(is.null(sub.batch),1,length(unique(sub.batch)))
+nbatch <- ifelse(!use.pseudosample,nbatch.org,length(unique(sub.batch)))
 
 subsamples.org     <- subsamples
 subsubsamples.org  <- 1:nsub
