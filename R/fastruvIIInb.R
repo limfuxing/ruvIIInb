@@ -42,11 +42,20 @@ if(!is.logical(ctl))
 idx <- which(ctl)
 nctl<- sum(ctl)
 
-# force M matrix into logical
+# check if any rows of M matrix has zero sum 
+zero.Mrows <- any(rowSums(M)==0)
+if(zero.Mrows)
+ stop('Some rows of M matrix has all zero entries. Please check your M matrix!')
+
+# force M matrix into logical matrix
 mode(M) <- 'logical'
+M       <- as.matrix(M)
+
+
+
 
 #format and convert M matrix into list of indices to save space
-rep.ind <- apply(M,2,which)
+rep.ind <- apply(M,2,which,simplify=FALSE)
 # define strata as columns of M matrix for which a cell is part of
 strata <- apply(M,1,which)
 
@@ -82,9 +91,21 @@ if(is.null(batch)) {
   batch <- rep(1,ncol(Y))
 }
 
+# if batch is not numeric vector, stop and let user knows
+if(!is.null(batch) & !is.numeric(batch)) {
+  stop(paste0('Batch variable is not a numeric vector. Please supply batch variable as numeric vector with 1,2...B values'))
+}
+
+
 # get Huber's k
 k.huber<- ifelse(robust,1.345,100)
 
+# adjust pCells.touse to allow max 3000 cells
+max.pCells <- 3000/nrow(Y)
+if(max.pCells < pCells.touse) {
+  pCells.touse <- max.pCells
+  print(paste0('pCells.touse parameter is too large and has now been set to ', round(pCells.touse ,6)))
+}
 # select a subset of cells representative of sub-pops defined by M matrix
 subsamples <- sample(rep.ind[[1]],size=ceiling(pCells.touse*length(rep.ind[[1]])))
 if(length(rep.ind)>1) {
@@ -95,7 +116,7 @@ if(length(rep.ind)>1) {
 subsamples <- sort(subsamples)
 Ysub  <- as.matrix(Y[,subsamples])
 Msub <- as.matrix(M[subsamples,])
-rep.sub <- apply(Msub,2,which)
+rep.sub <- apply(Msub,2,which,simplify=FALSE)
 sub.batch <- batch[subsamples]
 if(!is.null(strata)) 
  strata <- strata[subsamples]
@@ -171,55 +192,63 @@ if(use.pseudosample) {
 
  Ysub <- Ysub[,subsamples]
  Msub <- as.matrix(Msub[subsamples,])
- rep.sub <- apply(Msub,2,which)
+ rep.sub <- apply(Msub,2,which,simplify=FALSE)
  sub.batch <- sub.batch[subsamples]
  nsub <- ncol(Ysub)
 }
 
 
-# initiate W by performing SVD on the control log(Yc+1)
-off.g  <- log(DelayedMatrixStats::rowMeans2(Ysub))
-Y.norm <- sweep(Ysub,1,exp(off.g),'/')
-# determine the number of blocks
-Wsub <- irlba::irlba(log(as.matrix(Y.norm[ctl,])+1),nv=k)$v
-nsub <- ncol(Ysub)
+lmu.hat<- Z <- log(Ysub+1) 
+gmean  <- rowMeans(Z)
+proj.Z <- projection(rep.sub,Zmat=Z)[,apply(Msub,1,which)]
+RM_Z   <- Z - proj.Z
+U0     <- irlba::irlba(RM_Z,nv=k)$v
+# alpha(n x k) matrix
+alpha  <- Z %*% U0
 
-# initiate beta and alpha: by performing poisson GLM gene-by-gene
+# reduce outliers
+a.med <- matrixStats::colMedians(alpha)
+a.mad <- matrixStats::colMads(alpha)
+for(i in 1:ncol(alpha)) {
+ alpha[which(alpha[,i]> (a.med[i]+4*a.mad[i])),i] <- a.med[i]+4*a.mad[i]
+ alpha[which(alpha[,i]< (a.med[i]-4*a.mad[i])),i] <- a.med[i]-4*a.mad[i]
+}
+alpha.c <- as.matrix(alpha[ctl,])
+Z.c    <- Z[ctl,] - gmean[ctl]
+
+# initiate W (m x k)
+#Wsub <- Matrix::crossprod(Z.c,alpha.c) %*% solve(Matrix::crossprod(alpha.c)) 
+Wsub      <- matrix(0,nsub,k)
+Wsub[,1]  <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,1])) %*% solve(Matrix::crossprod(as.matrix(alpha.c[,1]),as.matrix(alpha.c[,1]))) 
+if(k>1) {
+ for(j in 2:k) {
+   Z.c <- Z.c - outer(alpha.c[,j-1],Wsub[,j-1])
+   Wsub[,j] <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,j])) %*% solve(Matrix::crossprod(as.matrix(alpha.c[,j]),as.matrix(alpha.c[,j]))) 
+ }
+}
+# reduce outliers
+w.med <- matrixStats::colMedians(Wsub)
+w.mad <- matrixStats::colMads(Wsub)
+for(i in 1:ncol(Wsub)) {
+  Wsub[which(Wsub[,i]> (w.med[i]+4*w.mad[i])),i] <- w.med[i]+4*w.mad[i]
+  Wsub[which(Wsub[,i]< (w.med[i]-4*w.mad[i])),i] <- w.med[i]-4*w.mad[i]
+}
+
+# initiate Mb and gmean (intercept): by performing poisson GLM gene-by-gene
 nW   <- ncol(Wsub)
 nM   <- ncol(M)
 ngene<- nrow(Y)
 ns   <- ncol(Y)
 
 bef   <- Sys.time()
-coef <- foreach(i=1:ngene, .combine=cbind, .packages="Rfast") %dopar% {
-          out <- Rfast::lmfit(y=log(Ysub[i,]+1),x=cbind(1,Wsub),w=Ysub[i,]+1)$be
-          return(as.matrix(out))
-}
-#print(dim(coef))
-aft   <- Sys.time()
-#print(paste0('time to compute initial est:', difftime(aft,bef,units='secs')))
-coef <- as.matrix(coef)
+# update Mb
+Wa     <- Matrix::tcrossprod(alpha,Wsub)
+Z.res  <- Z -  Wa  - gmean
+Mb  <- tryCatch({ projection(rep.sub,Zmat=Z.res,Wmat=NULL,lambda=lambda.b)}, error = function(e) {NA})
 
-# alpha(n x k) matrix
-alpha<- as.matrix(t(coef)[,-1])
+# get alpha deviation
 alpha.mean <- matrixStats::colMeans2(alpha)
 alpha.dev <- sweep(alpha,2,alpha.mean,'-')
-
-#print(dim(alpha))
-#print(dim(Wsub))
-
-alpha.mean <- matrixStats::colMeans2(alpha)
-alpha.dev <- sweep(alpha,2,alpha.mean,'-')
-
-# Mb (n x m_1) matrix
-Mb   <- matrix(0,nrow=ngene,ncol=nM,byrow=FALSE)
-
-#handling NA/Inf
-Mb[which(is.na(Mb) | is.infinite(Mb))] <- 0
-alpha[which(is.na(alpha) | is.infinite(alpha))] <- 0
-
-#gmean
-gmean<- c(coef[1,])
 
 # estimate initial psi 
 Wa   <- Matrix::tcrossprod(alpha,Wsub) 
@@ -629,6 +658,7 @@ if(conv) {
 
  # update W until convergence
  conv.W <- FALSE
+ iter.W <- 1
  while(!conv.W) {
   W.old <- W
   for(block in 1:nb) {
@@ -674,7 +704,8 @@ if(conv) {
 
   crit.W <- mean( (abs(W-W.old)/abs(W.old))^2)
   #print(round(crit.W,10))
-  conv.W <- crit.W< 1e-5
+  iter.W <- iter.W + 1
+  conv.W <- crit.W< 1e-5 | iter.W>8
  }
  aft=Sys.time()
  #print(paste0('Time to estimate W for all samples:',difftime(aft,bef,units='secs')))
