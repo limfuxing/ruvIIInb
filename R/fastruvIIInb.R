@@ -246,10 +246,6 @@ Wa     <- Matrix::tcrossprod(alpha,Wsub)
 Z.res  <- Z -  Wa  - gmean
 Mb  <- tryCatch({ projection(rep.sub,Zmat=Z.res,Wmat=NULL,lambda=lambda.b)}, error = function(e) {NA})
 
-# get alpha deviation
-alpha.mean <- matrixStats::colMeans2(alpha)
-alpha.dev <- sweep(alpha,2,alpha.mean,'-')
-
 # estimate initial psi 
 Wa   <- Matrix::tcrossprod(alpha,Wsub) 
 offs <- Wa + Mb[,apply(Msub,1,which)] 
@@ -311,7 +307,7 @@ while(!conv) {
  step <- rep(1,ngene)
  conv.beta <- FALSE
  # saving temporary best estimate
- best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb; best.adev <- alpha.dev; best.gmean <- gmean
+ best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb; best.gmean <- gmean
  
  iter <- 1
  halving <- 0
@@ -361,46 +357,19 @@ while(!conv) {
  # store current alpha est
  alpha.old <- alpha
 
- # get alpha mean
- acomb <- function(...) abind::abind(..., along=3)
- bef   <- Sys.time()
- results <- foreach(i=1:ngene, .combine=acomb, .packages="Matrix") %dopar% {
-  wtvec    <- sig.inv[i,] 
-  wtvec    <- wtvec/mean(wtvec)
-  A        <- Matrix::crossprod(RM_W*wtvec,RM_W)
-  b1       <- Matrix::crossprod(RM_W*wtvec, as.matrix(RM_Z[i,]) - RM_W %*% as.matrix(alpha.dev[i,]))
-  return(cbind(A,b1))
- }
- aft   <- Sys.time()
- #print(paste0('time to calculate ameans:',  difftime(aft,bef,units='secs')))
-
- if(k>1) {
-  alpha.mean <- solve(as.matrix(apply(results[,1:nW,],c(1,2),sum)),as.matrix(apply(results[,nW+1,],1,sum)))
-  A  <- results[,1:nW,,drop=FALSE]
- }
- if(k==1) {
-  alpha.mean <- c(sum(results[,(nW+1),])/sum(results[,1:nW,]))
-  A <- results[,1:nW,,drop=FALSE]
- }
- # get alpha dev
- acomb2 <- function(...) abind::abind(..., along=2)
+ # get alpha 
  bef=Sys.time()
- RM_W_amean<- RM_W %*% as.matrix(alpha.mean)
- alpha.dev <- foreach(i=1:ngene, .combine=acomb2, .packages="Matrix") %dopar% { 
-      wtvec    <- sig.inv[i,] 
-      wtvec    <- wtvec/mean(wtvec)
-      b        <- Matrix::crossprod(RM_W*wtvec, as.matrix(RM_Z[i,]) - RM_W_amean)
-      solve(A[,,i]+lambda.a*diag(nW),b)
- }
+ wt.cell  <- matrixStats::colMeans2(sig.inv)
+ # prevent outlier large weight
+ p98      <- quantile(wt.cell,probs=0.98)
+ #wt.cell[which(wt.cell>=p98)] <- p98
+ wt.cell  <- rep(1,ncol(sig.inv))
+ b        <- RM_Z %*% diag(wt.cell) %*% RM_W
+ alpha    <- b %*% Matrix::chol2inv(chol(Matrix::crossprod(RM_W*wt.cell,RM_W)+lambda.a*diag(nW)))
  aft <- Sys.time()
- #print(dim(alpha.dev))
- #print(paste0('time to calculate adev:',  difftime(aft,bef,units='secs')))
- alpha.dev <- as.matrix(alpha.dev)
- if(ncol(alpha.dev)!=k)
-  alpha.dev <- t(alpha.dev)
+ #print(dim(alpha))
+ #print(paste0('time to calculate alpha:',  difftime(aft,bef,units='secs')))
 
- # get alpha
- alpha <- sweep(alpha.dev,2,alpha.mean,'+')
  # if new alpha est has missing/inf values, revert to previous estimate
  #print(paste0('Problematic alpha entries=',sum(is.na(alpha) | is.infinite(alpha))))
  if(any(is.na(alpha) | is.infinite(alpha) )) alpha <- alpha.old
@@ -411,8 +380,7 @@ while(!conv) {
  for(i in 1:nW) {
    alpha[which(alpha[,i]> (a.med[i]+4*a.mad[i])),i] <- a.med[i]+4*a.mad[i]
    alpha[which(alpha[,i]< (a.med[i]-4*a.mad[i])),i] <- a.med[i]-4*a.mad[i]
- }
-
+ } 
 
  # step2: update W using WLS of Z_c (Z for control genes) on alpha.c (alpha for control genes)
  Wsub.old <- Wsub 
@@ -420,7 +388,6 @@ while(!conv) {
  bef <- Sys.time()
  #W   <- BiocParallel::bpmapply(FUN=getW,Z=Z.list,signdev=signdev.bycol,wt=wtlist,zeroinf=zeroinf.list,
  #			MoreArgs=list(alpha=alpha,ctl=ctl,k.huber=k.huber,k=k),BPPARAM=BPPARAM)
-
 
  Wsub <- foreach(i=1:nsub, .combine=cbind, .packages="Matrix") %dopar% { 
   out <- rep(0,k)
@@ -455,15 +422,8 @@ while(!conv) {
  
  #step3a: update gmean
  Z.res  <- Z -  Matrix::tcrossprod(alpha,Wsub)  - Mb[,apply(Msub,1,which)]
-
  bef <- Sys.time()
- temp <- tryCatch({
- for(i in 1:ngene) {
-    wtvec     <- sig.inv[i,]
-    wtvec     <- wtvec/sum(wtvec)
-    gmean[i]  <- sum(Z.res[i,]*wtvec)
- }
- }, error = function(e) {NA})
+ gmean<- matrixStats::rowSums2(Z.res*sig.inv)/matrixStats::rowSums2(sig.inv)
  aft <- Sys.time()
  #print(paste0('time to calculate gmean:',  difftime(aft,bef,units='secs')))
 
@@ -472,6 +432,8 @@ while(!conv) {
  Mb.old <- Mb
  bef <- Sys.time()
  Mb  <- tryCatch({ projection(rep.sub,Zmat=Z.res,Wmat=sig.inv,lambda=lambda.b)}, error = function(e) {NA})
+ # set Mb=0 for control genes
+ Mb[ctl,] <- 0
  aft <- Sys.time()
  #print(paste0('time to calculate Mb:',  difftime(aft,bef,units='secs')))
 
@@ -513,7 +475,7 @@ while(!conv) {
   if(degener) {
     check.gene <- loglik>loglik.tmp
     step[check.gene] <- step[check.gene]*step.fac
-    Wsub    <- best.W; alpha <- best.a ; Mb <- best.Mb ; psi <- best.psi ; alpha.dev <- best.adev ; gmean <- best.gmean 
+    Wsub    <- best.W; alpha <- best.a ; Mb <- best.Mb ; psi <- best.psi ; gmean <- best.gmean 
     halving <- halving + 1
     if(halving>=3) {
      loglik.tmp <- loglik
@@ -525,7 +487,7 @@ while(!conv) {
    logl.beta  <- c(logl.beta,sum(loglik))
    print(paste0('Outer Iter ',iter.outer, ', Inner iter ', iter, ' logl-likelihood:', logl.beta[length(logl.beta)]))
    # saving temporary best estimate
-   best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb ; best.adev <- alpha.dev; best.gmean <- gmean 
+   best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb ; best.gmean <- gmean 
    iter <- iter + 1
    halving <- 0
   }
@@ -577,7 +539,6 @@ psi[!is.na(psi.new) & !is.infinite(psi.new)] <- psi.new[!is.na(psi.new) & !is.in
 Wsub <- best.W
 alpha <- best.a
 Mb    <- best.Mb
-alpha.dev <- best.adev
 gmean <- best.gmean
 # new changes
 best.psi <- psi
