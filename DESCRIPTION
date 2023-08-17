@@ -26,7 +26,7 @@ Imports: edgeR (>= 3.34.0), doParallel (>= 1.0.15),
         1.2-17), ZIM (>= 1.1.0), scater (>= 1.20.1), scran (>=
         1.20.1),scuttle (>= 1.2.1), SingleR (>= 1.6.1), celldex (>=
         1.2.0), hrbrthemes (>= 0.8.0), tidyverse (>= 1.3.1), ggplot2
-        (>= 3.3.5), uwot (>= 0.1.10), scMerge (>= 1.8.0), Seurat (>=
+        (>= 3.3.5), uwot (>= 0.1.10), Seurat (>=
         4.0.4), randomcoloR (>= 1.1.0.1), dittoSeq (>= 1.4.4), bookdown
         (>= 0.24)
 Suggests: knitr, rmarkdown
