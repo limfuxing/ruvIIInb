@@ -4,14 +4,21 @@
 \alias{makeSCE}
 \title{Create SingleCellExperiment object containing normalized data}
 \usage{
-makeSCE(obj, cData = NULL, batch = NULL)
+makeSCE(
+  obj,
+  cData = NULL,
+  batch = NULL,
+  assays = c("logcounts", "logPAC", "pearson")
+)
 }
 \arguments{
 \item{obj}{object containing output of call to ruvIII.nb or fastruvIII.nb function.}
 
-\item{cData}{A data frame containing cell-level metadata. This data frame will be used as 'colData' in the SingleCellExperiment object and must be specified}
+\item{cData}{A data frame containing cell-level metadata. This data frame will be used as 'colData' in the SingleCellExperiment object and must be specified.}
 
 \item{batch}{numeric vector containing batch information for each sample. Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.}
+
+\item{assays}{type of corrected data to return. Available types are "logcounts","logPAC" and "pearson".}
 }
 \value{
 A SingleCellExperiment object with normalized data added to the 'assays' slot. The log percentile-adjusted count is stored in the 'logPAC' component of the 'assays' slot and the Pearson residuals is in the 'pearson' component.

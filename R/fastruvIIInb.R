@@ -5,7 +5,7 @@
 #' and the (pseudo)replicate matrix that define sets of cells that can be considered technical replicates.
 #'
 #' @param Y raw count as DelayedMatrix object with genes as rows and cells as columns
-#' @param M replicate matrix with number of rows equal to the number of cells and number of columns equal to the number of distinct sub-population of cells: M(i,j) = 1 if cell i is part of replicate j and 0 otherwise. If cell-type is known, this can be used to form the replicate matrix, with each cell-type corresponds to one sub-population of cells. If cell-type is unknown, the scMerge::scReplicate command can be used to identify the pseudo-replicates.
+#' @param M replicate matrix with number of rows equal to the number of cells and number of columns equal to the number of distinct sub-population of cells: M(i,j) = 1 if cell i is part of sub-population j and 0 otherwise. If a row has all zero entries, it means the corresponding cell is not assumed to belong to any of the known sub-populations (a priori unannotated cells). 
 #' @param ctl  either logical vector of length n with TRUE = control genes OR a character vector of names of control genes
 #' @param k dimension of unwanted variation against which the data is to be normalized against. Default is 2.
 #' @param robust logical value. Whether to use Huber's robust weight in the iterative reweighted least squares (IRLS) algorithm. Default is FALSE.
@@ -20,7 +20,7 @@
 #' @param use.pseudosample whether to use pseudocells to define replicates (default is FALSE). Note that the replicates defined by the pseudocells will be used in addition to any replicates defined by the M matrix above. We recommend that use.pseudosample=TRUE be used only for data with UMI.
 #' @param nc.pool the number of cells per pool (used for defining pseudocells). The default is 20. Only relevant when use.pseudosample=TRUE.
 #' @param batch.disp whether to fit batch-specific dispersion parameter for each gene. The default is FALSE.
-#' @param pCells.touse the proportion of cells used to estimate alpha and dispersion parameter (Default=20%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10% of the original subset of cells will be used to estimate alpha.
+#' @param pCells.touse the proportion of a priori annotated cells used to estimate alpha and dispersion parameter (Default=20%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10% of the original subset of cells will be used to estimate alpha.
   
 #' @return A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
 #' @export
@@ -44,15 +44,16 @@ nctl<- sum(ctl)
 
 # check if any rows of M matrix has zero sum 
 zero.Mrows <- any(rowSums(M)==0)
-if(zero.Mrows)
- stop('Some rows of M matrix has all zero entries. Please check your M matrix!')
+if(zero.Mrows) {
+ n.unannot <- sum(rowSums(M)==0)
+ print(paste0(n.unannot, ' cells have all zero entries in the M matrix. They will be considered as un-annotated cells'))
+ if(n.unannot < (0.01*ncol(Y))) 
+   stop('Less than 1% of cells have known annotation. Please increase the pct of cells with known annotation to 1%')
+}
 
 # force M matrix into logical matrix
 mode(M) <- 'logical'
 M       <- as.matrix(M)
-
-
-
 
 #format and convert M matrix into list of indices to save space
 rep.ind <- apply(M,2,which,simplify=FALSE)
@@ -101,7 +102,7 @@ if(!is.null(batch) & !is.numeric(batch)) {
 k.huber<- ifelse(robust,1.345,100)
 
 # adjust pCells.touse to allow max 3000 cells
-max.pCells <- 3000/nrow(Y)
+max.pCells <- 3000/sum(rowSums(M)>0)
 if(max.pCells < pCells.touse) {
   pCells.touse <- max.pCells
   print(paste0('pCells.touse parameter is too large and has now been set to ', round(pCells.touse ,6)))
@@ -197,7 +198,15 @@ if(use.pseudosample) {
  nsub <- ncol(Ysub)
 }
 
+# select a maximum of 100 cells per batch for estimating psi
+psi.idx   <- NULL
+for(B in sort(unique(sub.batch))) 
+  psi.idx  <- c(psi.idx,sample(which(sub.batch==B),size=min(100,round(0.5*sum(sub.batch==B)))))
+psi.batch  <- sub.batch[psi.idx]
+nsub.psi   <- length(psi.idx)
+Ysub.psi   <- Ysub[,psi.idx]
 
+# initial estimate
 lmu.hat<- Z <- log(Ysub+1) 
 gmean  <- rowMeans(Z)
 proj.Z <- projection(rep.sub,Zmat=Z)[,apply(Msub,1,which)]
@@ -246,30 +255,33 @@ Wa     <- Matrix::tcrossprod(alpha,Wsub)
 Z.res  <- Z -  Wa  - gmean
 Mb  <- tryCatch({ projection(rep.sub,Zmat=Z.res,Wmat=NULL,lambda=lambda.b)}, error = function(e) {NA})
 
-# estimate initial psi 
+# estimate initial psi
+bef <- Sys.time() 
 Wa   <- Matrix::tcrossprod(alpha,Wsub) 
 offs <- Wa + Mb[,apply(Msub,1,which)] 
+offs.psi <- offs[,psi.idx]
 bef  <- Sys.time()
 if(parallel) {
  if(nbatch==1) 
-  psi <- estimateDisp.par(Ysub,as.matrix(rep(1,nsub)),offset=offs,tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
+  psi <- estimateDisp.par(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
  if(nbatch>1) {
-  psi <- estimateDisp.par(Ysub[,sub.batch==1],as.matrix(rep(1,sum(sub.batch==1))),
-				offset=offs[,sub.batch==1],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
-  for(B in 2:max(batch)) 
-      psi <- cbind(psi,estimateDisp.par(Ysub[,sub.batch==B],as.matrix(rep(1,sum(sub.batch==B))),
-				offset=offs[,sub.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion)
+  psi <- estimateDisp.par(Ysub.psi[,psi.batch==1],as.matrix(rep(1,sum(psi.batch==1))),
+				offset=offs.psi[,psi.batch==1],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
+  for(B in 2:max(psi.batch)) {
+      psi <- cbind(psi,estimateDisp.par(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
+				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion)
+  }
  }
 } 
 if(!parallel) {
  if(nbatch==1) 
-  psi <- edgeR::estimateDisp(Ysub,as.matrix(rep(1,nsub)),offset=offs,tagwise=TRUE,robust=TRUE)$tagwise.dispersion
+  psi <- edgeR::estimateDisp(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE)$tagwise.dispersion
  if(nbatch>1) {
-  psi <- edgeR::estimateDisp(Ysub[,sub.batch==1],as.matrix(rep(1,sum(sub.batch==1))),
-				offset=offs[,sub.batch==1],tagwise=TRUE,robust=TRUE)$tagwise.dispersion
-  for(B in 2:max(batch)) 
-   psi <- cbind(psi,edgeR::estimateDisp(Ysub[,sub.batch==B],as.matrix(rep(1,sum(sub.batch==B))),
-				offset=offs[,sub.batch==B],tagwise=TRUE,robust=TRUE)$tagwise.dispersion)
+  psi <- edgeR::estimateDisp(Ysub.psi[,psi.batch==1],as.matrix(rep(1,sum(psi.batch==1))),
+				offset=offs.psi[,psi.batch==1],tagwise=TRUE,robust=TRUE)$tagwise.dispersion
+  for(B in 2:max(sub.batch)) 
+   psi <- cbind(psi,edgeR::estimateDisp(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
+				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE)$tagwise.dispersion)
  }
 }
 aft <- Sys.time()
@@ -279,7 +291,7 @@ aft <- Sys.time()
 conv <- FALSE
 iter.outer <- 0
 logl.outer <- NULL
-step <- rep(1,ngene)
+step <- rep(1,nsub)
 print('Start...')
 while(!conv) {
  iter.outer <- iter.outer + 1
@@ -288,15 +300,15 @@ while(!conv) {
  ### calculate initial loglik
  lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] +  Matrix::tcrossprod(alpha,Wsub) 
  if(nbatch>1) {
-  temp <- foreach(i=1:ngene, .combine=c) %dopar% {
-    tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i,sub.batch],log=TRUE)
+  temp <- foreach(i=1:nsub, .combine=c) %dopar% {
+    tmp <- dnbinom(Ysub[,i],mu=exp(lmu.hat[,i]),size=1/psi[,sub.batch[i]],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
  } 
  if(nbatch==1) {
-  temp <- foreach(i=1:ngene, .combine=c) %dopar% {
-    tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i],log=TRUE)
+  temp <- foreach(i=1:nsub, .combine=c) %dopar% {
+    tmp <- dnbinom(Ysub[,i],mu=exp(lmu.hat[,i]),size=1/psi,log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
@@ -304,7 +316,7 @@ while(!conv) {
  loglik <- temp
 
  #############################
- step <- rep(1,ngene)
+ step <- rep(1,nsub)
  conv.beta <- FALSE
  # saving temporary best estimate
  best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb; best.gmean <- gmean
@@ -333,7 +345,7 @@ while(!conv) {
  }  
  
  
- Z      <- lmu.hat + step*((Ysub+0.01)/(exp(lmu.hat)+0.01) - 1)
+ Z      <- lmu.hat + sweep( ((Ysub+0.01)/(exp(lmu.hat)+0.01) - 1),2,step,'*')
 
  # project Z and W into M
  
@@ -362,8 +374,8 @@ while(!conv) {
  wt.cell  <- matrixStats::colMeans2(sig.inv)
  # prevent outlier large weight
  p98      <- quantile(wt.cell,probs=0.98)
- #wt.cell[which(wt.cell>=p98)] <- p98
- wt.cell  <- rep(1,ncol(sig.inv))
+ wt.cell[which(wt.cell>=p98)] <- p98
+ #wt.cell  <- rep(1,ncol(sig.inv))
  b        <- RM_Z %*% diag(wt.cell) %*% RM_W
  alpha    <- b %*% Matrix::chol2inv(chol(Matrix::crossprod(RM_W*wt.cell,RM_W)+lambda.a*diag(nW)))
  aft <- Sys.time()
@@ -389,17 +401,28 @@ while(!conv) {
  #W   <- BiocParallel::bpmapply(FUN=getW,Z=Z.list,signdev=signdev.bycol,wt=wtlist,zeroinf=zeroinf.list,
  #			MoreArgs=list(alpha=alpha,ctl=ctl,k.huber=k.huber,k=k),BPPARAM=BPPARAM)
 
- Wsub <- foreach(i=1:nsub, .combine=cbind, .packages="Matrix") %dopar% { 
-  out <- rep(0,k)
-  wtvec     <- sig.inv[ctl,i] 
-  wtvec     <- wtvec/mean(wtvec)
-  out[1]      <- Rfast::lmfit(y=Z[ctl,i]-gmean[ctl],x=alpha[ctl,1],w=wtvec)$be
-  if(k>1) {
-    for(j in 2:k) {
-      out[j] <- Rfast::lmfit(y=Z[ctl,i]-gmean[ctl]-matrixStats::rowSums2(as.matrix(alpha[ctl,1:(j-1)]) %*% as.matrix(out[1:(j-1)])),x=alpha[ctl,j],w=wtvec)$be
-    } 
+ #Wsub <- foreach(i=1:nsub, .combine=cbind, .packages="Matrix") %dopar% { 
+ # out <- rep(0,k)
+ # wtvec     <- sig.inv[ctl,i] 
+ # wtvec     <- wtvec/mean(wtvec)
+ # out[1]      <- Rfast::lmfit(y=Z[ctl,i]-gmean[ctl],x=alpha[ctl,1],w=wtvec)$be
+ # if(k>1) {
+ #   for(j in 2:k) {
+ #     out[j] <- Rfast::lmfit(y=Z[ctl,i]-gmean[ctl]-matrixStats::rowSums2(as.matrix(alpha[ctl,1:(j-1)]) %*% as.matrix(out[1:(j-1)])),x=alpha[ctl,j],w=wtvec)$be
+ #   } 
+ # }
+ # as.matrix(out)
+ #}
+
+ Z.c     <- Z[ctl,]-gmean[ctl]
+ alpha.c <- alpha[ctl,]
+ wt.ctl <- rowMeans(sig.inv[ctl,])
+ Wsub[,1]  <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,1]*wt.ctl)) %*% solve(lambda.a + Matrix::crossprod(as.matrix(alpha.c[,1]*wt.ctl),as.matrix(alpha.c[,1]))) 
+ if(k>1) {
+  for(j in 2:k) {
+   Z.c <- Z.c - outer(alpha.c[,j-1],Wsub[,j-1])
+   Wsub[,j] <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,j]*wt.ctl)) %*% solve(lambda.a +Matrix::crossprod(as.matrix(alpha.c[,j]*wt.ctl),as.matrix(alpha.c[,j]))) 
   }
-  as.matrix(out)
  }
 	   
  aft <- Sys.time()
@@ -410,7 +433,7 @@ while(!conv) {
 
  colNorm.Wsub <- matrixStats::colSums2(Wsub^2)
  # normalize W to have unit length for each col
- Wsub  <- sweep(Wsub,2,sqrt(colNorm.Wsub),'/')
+ #Wsub  <- sweep(Wsub,2,sqrt(colNorm.Wsub),'/')
  
  # orthogonalize W (optional)
  if(nW>1 & ortho.W)  
@@ -453,15 +476,15 @@ while(!conv) {
  # calculate current logl
  lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] +  Matrix::tcrossprod(alpha,Wsub) 
  if(nbatch>1) {
-  temp <- foreach(i=1:ngene, .combine=c) %dopar% {
-    tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i,sub.batch],log=TRUE)
+  temp <- foreach(i=1:nsub, .combine=c) %dopar% {
+    tmp <- dnbinom(Ysub[,i],mu=exp(lmu.hat[,i]),size=1/psi[,sub.batch[i]],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
  } 
  if(nbatch==1) {
-  temp <- foreach(i=1:ngene, .combine=c) %dopar% {
-    tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i],log=TRUE)
+  temp <- foreach(i=1:nsub, .combine=c) %dopar% {
+    tmp <- dnbinom(Ysub[,i],mu=exp(lmu.hat[,i]),size=1/psi,log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
@@ -508,27 +531,29 @@ if(iter.outer>1)
 
 Wa =  Matrix::tcrossprod(best.a,best.W) 
 offs <- Wa + best.Mb[,apply(Msub,1,which)] 
+offs.psi <- offs[,psi.idx]
 if(updt.psi) {
 if(parallel) {
  if(nbatch==1) 
-  psi.new <- tryCatch({ estimateDisp.par(Ysub,as.matrix(rep(1,nsub)),offset=offs,
+  psi.new <- tryCatch({ estimateDisp.par(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,
 				tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion}, error = function(e) {NA})
  if(nbatch>1) {
   psi.new <- psi
-  for(B in 1:max(batch)) 
-   psi.new[,B]<-tryCatch({estimateDisp.par(Ysub[,sub.batch==B],as.matrix(rep(1,sum(sub.batch==B))),
-				offset=offs[,sub.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion},error= function(e) {NA})
+  for(B in 1:max(psi.batch)) 
+   psi.new[,B]<-tryCatch({estimateDisp.par(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
+				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion},error= function(e) {NA})
  }
 }
 
 if(!parallel) {
  if(nbatch==1) 
-  psi.new <- tryCatch({ edgeR::estimateDisp(Ysub,as.matrix(rep(1,nsub)),offset=offs,tagwise=TRUE,robust=TRUE)$tagwise.dispersion},error = function(e) {NA})
+  psi.new <- tryCatch({ edgeR::estimateDisp(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE)$tagwise.dispersion},error = function(e) {NA})
  if(nbatch>1) {
   psi.new <- psi
-  for(B in 1:max(batch)) 
-   psi.new[,B] <- tryCatch({ edgeR::estimateDisp(Ysub[,sub.batch==B],as.matrix(rep(1,sum(sub.batch==B))),
-				offset=offs[,sub.batch==B],tagwise=TRUE,robust=TRUE)$tagwise.dispersion},error = function(e) {NA})
+  for(B in 1:max(psi.batch)) 
+   psi.new[,B] <- tryCatch({ edgeR::estimateDisp(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
+				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE)$tagwise.dispersion},
+				error = function(e) {NA})
  }
 }
 # update psi
@@ -546,15 +571,15 @@ best.psi <- psi
 # recalculate logl
 lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] +  Matrix::tcrossprod(alpha,Wsub) 
 if(nbatch>1) {
-  temp <- foreach(i=1:ngene, .combine=c) %dopar% {
-    tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i,sub.batch],log=TRUE)
+  temp <- foreach(i=1:nsub, .combine=c) %dopar% {
+    tmp <- dnbinom(Ysub[,i],mu=exp(lmu.hat[,i]),size=1/psi[,sub.batch[i]],log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
 } 
 if(nbatch==1) {
-  temp <- foreach(i=1:ngene, .combine=c) %dopar% {
-    tmp <- dnbinom(Ysub[i,],mu=exp(lmu.hat[i,]),size=1/psi[i],log=TRUE)
+  temp <- foreach(i=1:nsub, .combine=c) %dopar% {
+    tmp <- dnbinom(Ysub[,i],mu=exp(lmu.hat[,i]),size=1/psi,log=TRUE)
     tmp[is.infinite(tmp) | is.na(tmp)] <- log(.Machine$double.xmin)
     return(sum(tmp))
   }
@@ -571,6 +596,7 @@ if(conv) {
  gmean <- best.gmean
  Mb  <- best.Mb
  psi   <- best.psi
+ alpha.c <- as.matrix(alpha[ctl,])
  # estimate W for all samples (initial)
  print('Estimating W for all samples...')
  bef=Sys.time()
@@ -579,34 +605,22 @@ if(conv) {
  # block size variable
  block.size <- min(5000,ncol(Y))
  nb    <- ceiling(ncol(Y)/block.size)
+ alpha.c <- alpha[ctl,]
  for(block in 1:nb) {
   start.idx <- (block-1)*block.size+1 ; end.idx <- min(ns,block*block.size)
-  Ysub  <- as.matrix(Y[,start.idx:end.idx])
-  ns.sub<- ncol(Ysub)
-  sub.out <- foreach(i=1:ns.sub, .combine=cbind, .packages="Matrix") %dopar% { 
-   out <- rep(0,k)
-   lmu  <- gmean + Mb[,which(M[start.idx+i-1,])] + alpha %*% as.matrix(W[start.idx+i-1,])
-   Zctl<-  lmu[ctl] + ( (Ysub[ctl,i]+0.01)/(exp(lmu[ctl])+0.01) - 1)
-   if(nbatch>1)
-    wtvec<- c(1/(exp(-lmu) + psi[,batch[start.idx+i-1]]))
-   if(nbatch==1)
-    wtvec<- c(1/(exp(-lmu) + psi))
-   wtvec <- wtvec/mean(wtvec)
-   out[1] <- Rfast::lmfit(y=Zctl-gmean[ctl],x=alpha[ctl,1],w=wtvec[ctl])$be
-   if(k>1) {
-    for(j in 2:k) {
-      out[j] <- Rfast::lmfit(y=Zctl-gmean[ctl]-matrixStats::rowSums2(as.matrix(alpha[ctl,1:(j-1)]) %*% as.matrix(out[1:(j-1)])),x=alpha[ctl,j],w=wtvec[ctl])$be
-    } 
+  Ysub  <- as.matrix(Y[ctl,start.idx:end.idx])
+  lmu.hat <- gmean[ctl] + Matrix::tcrossprod(alpha.c,W[start.idx:end.idx,,drop=FALSE])
+  Z.c  <- lmu.hat - gmean[ctl] + (Ysub+0.01)/(exp(lmu.hat)+0.01) - 1
+  W[start.idx:end.idx,1]<-Matrix::crossprod(Z.c,as.matrix(alpha.c[,1]*wt.ctl)) %*% solve(lambda.a + Matrix::crossprod(as.matrix(alpha.c[,1]*wt.ctl),as.matrix(alpha.c[,1]))) 
+  if(k>1) {
+   for(j in 2:k) {
+    Z.c <- Z.c - outer(alpha.c[,j-1],W[start.idx:end.idx,j-1])
+    W[start.idx:end.idx,j] <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,j]*wt.ctl)) %*% solve(lambda.a +Matrix::crossprod(as.matrix(alpha.c[,j]*wt.ctl),as.matrix(alpha.c[,j]))) 
    }
-   as.matrix(out)
   }
-  if(ncol(sub.out)!=k)
-   sub.out <- t(sub.out)
-  W[start.idx:end.idx,] <- sub.out
-  } 
- 
+ }
  if(ncol(W)!=k) 
-   W <- t(W)
+  W <- t(W)
 
  # normalize W and alpha
  calnorm.W <- sqrt(matrixStats::colSums2(W^2))
@@ -624,29 +638,18 @@ if(conv) {
   W.old <- W
   for(block in 1:nb) {
    start.idx <- (block-1)*block.size+1 ; end.idx <- min(ns,block*block.size)
-   Ysub  <- as.matrix(Y[,start.idx:end.idx])
-   ns.sub<- ncol(Ysub)
-   sub.out <- foreach(i=1:ns.sub, .combine=cbind, .packages="Matrix") %dopar% { 
-    out <- rep(0,k)
-    lmu  <- gmean + Mb[,which(M[start.idx+i-1,])] + alpha %*% as.matrix(W[start.idx+i-1,])
-    Zctl<-  lmu[ctl] + ( (Ysub[ctl,i]+0.01)/(exp(lmu[ctl])+0.01) - 1)
-    if(nbatch>1)
-     wtvec<- c(1/(exp(-lmu) + psi[,batch[start.idx+i-1]]))
-    if(nbatch==1)
-     wtvec<- c(1/(exp(-lmu) + psi))
-    wtvec <- wtvec/mean(wtvec)
-    out[1] <- Rfast::lmfit(y=Zctl-gmean[ctl],x=alpha[ctl,1],w=wtvec[ctl])$be
-    if(k>1) {
-     for(j in 2:k) {
-       out[j] <- Rfast::lmfit(y=Zctl-gmean[ctl]-matrixStats::rowSums2(as.matrix(alpha[ctl,1:(j-1)]) %*% as.matrix(out[1:(j-1)])),x=alpha[ctl,j],w=wtvec[ctl])$be
-     } 
+   Ysub  <- as.matrix(Y[ctl,start.idx:end.idx])
+   lmu.hat <- gmean[ctl] + Matrix::tcrossprod(alpha.c,W[start.idx:end.idx,,drop=FALSE])
+   Z.c  <- lmu.hat - gmean[ctl] + (Ysub+0.01)/(exp(lmu.hat)+0.01) - 1
+   W[start.idx:end.idx,1]<-Matrix::crossprod(Z.c,as.matrix(alpha.c[,1]*wt.ctl)) %*% solve(lambda.a + Matrix::crossprod(as.matrix(alpha.c[,1]*wt.ctl),as.matrix(alpha.c[,1]))) 
+   if(k>1) {
+    for(j in 2:k) {
+     Z.c <- Z.c - outer(alpha.c[,j-1],W[start.idx:end.idx,j-1])
+     W[start.idx:end.idx,j] <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,j]*wt.ctl)) %*% solve(lambda.a +Matrix::crossprod(as.matrix(alpha.c[,j]*wt.ctl),as.matrix(alpha.c[,j]))) 
     }
-    as.matrix(out)
    }
-   if(ncol(sub.out)!=k)
-    sub.out <- t(sub.out)
-   W[start.idx:end.idx,] <- sub.out
-  } 
+  }
+
   if(ncol(W)!=k) 
    W <- t(W)
 
@@ -660,8 +663,8 @@ if(conv) {
     W <- matlib::GramSchmidt(W) 
 
   # fixed the sign of W
-  for(i in 1:ncol(W)) 
-   W[,i] <- W[,i] * sign(cor(W[subsamples.org[subsubsamples.org],i],Wsub[1:length(subsubsamples.org),i]))
+  #for(i in 1:ncol(W)) 
+  # W[,i] <- W[,i] * sign(cor(W[subsamples.org[subsubsamples.org],i],Wsub[1:length(subsubsamples.org),i]))
 
   crit.W <- mean( (abs(W-W.old)/abs(W.old))^2)
   #print(round(crit.W,10))
@@ -673,13 +676,30 @@ if(conv) {
 }
 } # end of outer IRLS loop
 
-# calibrate alpha and W
-for(k in 1:nW) {
- ab.W     <- Rfast::lmfit(y=Wsub[1:length(subsubsamples.org),k],x=cbind(1,W[subsamples.org[subsubsamples.org],k]))$be
- ab.alpha <- Rfast::lmfit(y=best.a[,k],x=cbind(1,alpha[,k]))$be
- W[,k]    <- ab.W[1] + ab.W[2]*W[,k]
- alpha[,k]<- ab.alpha[1] + ab.alpha[2]*alpha[,k]
+# now calculate Mb
+print('Estimating Mb....')
+Mb.all <- matrix(0,nrow(Y),ncol(Y))
+# for cells with annotation
+idx.annot <- unlist(rep.ind)
+Mb.all[,idx.annot] <- Mb[,apply(M[idx.annot,],1,which)]
+# for other cells
+if(length(idx.annot) < ncol(Y) ) {
+ lmu  <- gmean + Matrix::tcrossprod(alpha,W) + Mb.all
+ Z    <- Mb.all + ( (as.matrix(Y)+0.01)/(exp(lmu)+0.01) - 1)
+ if(nbatch>1)
+  wtmat<- 1/(exp(-lmu) + psi[,batch])
+ if(nbatch==1)
+  wtmat<- 1/(exp(-lmu) + psi)
+ Mb.all[,-idx.annot] <- Z[,-idx.annot] * (wtmat[,-idx.annot]/(wtmat[,-idx.annot]+lambda.b))
+ Mb.all[ctl,] <- 0
 }
+# calibrate alpha and W
+#for(k in 1:nW) {
+# ab.W     <- Rfast::lmfit(y=Wsub[1:length(subsubsamples.org),k],x=cbind(1,W[subsamples.org[subsubsamples.org],k]))$be
+# ab.alpha <- Rfast::lmfit(y=best.a[,k],x=cbind(1,alpha[,k]))$be
+# W[,k]    <- ab.W[1] + ab.W[2]*W[,k]
+# alpha[,k]<- ab.alpha[1] + ab.alpha[2]*alpha[,k]
+#}
 #alpha <- sweep(alpha,2,scfac.alpha,'/')
 cor.check <- diag(as.matrix(cor(Wsub[1:length(subsubsamples.org),],W[subsamples.org[subsubsamples.org],])))
 
@@ -687,8 +707,8 @@ if(use.pseudosample) {
    psi <- psi[,1:nbatch.org]
 }
 #output
-return( list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"Mb"=Mb, "gmean"=gmean,
-		"psi"=psi,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch,corW=cor.check) )
+return( list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"Mb"=Mb.all, "gmean"=gmean,
+		"psi"=psi,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch,corW=cor.check,subsamples=subsamples.org,Wsub=Wsub,Mb.sub=Mb) )
 }
 
 #### Helpers functions ######################################################################################

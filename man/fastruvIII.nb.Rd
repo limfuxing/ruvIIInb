@@ -27,7 +27,7 @@ fastruvIII.nb(
 \arguments{
 \item{Y}{raw count as DelayedMatrix object with genes as rows and cells as columns}
 
-\item{M}{replicate matrix with number of rows equal to the number of cells and number of columns equal to the number of distinct sub-population of cells: M(i,j) = 1 if cell i is part of replicate j and 0 otherwise. If cell-type is known, this can be used to form the replicate matrix, with each cell-type corresponds to one sub-population of cells. If cell-type is unknown, the scMerge::scReplicate command can be used to identify the pseudo-replicates.}
+\item{M}{replicate matrix with number of rows equal to the number of cells and number of columns equal to the number of distinct sub-population of cells: M(i,j) = 1 if cell i is part of sub-population j and 0 otherwise. If a row has all zero entries, it means the corresponding cell is not assumed to belong to any of the known sub-populations (a priori unannotated cells).}
 
 \item{ctl}{either logical vector of length n with TRUE = control genes OR a character vector of names of control genes}
 
@@ -57,7 +57,7 @@ fastruvIII.nb(
 
 \item{batch.disp}{whether to fit batch-specific dispersion parameter for each gene. The default is FALSE.}
 
-\item{pCells.touse}{the proportion of cells used to estimate alpha and dispersion parameter (Default=20\%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10\% of the original subset of cells will be used to estimate alpha.}
+\item{pCells.touse}{the proportion of a priori annotated cells used to estimate alpha and dispersion parameter (Default=20\%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10\% of the original subset of cells will be used to estimate alpha.}
 }
 \value{
 A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
