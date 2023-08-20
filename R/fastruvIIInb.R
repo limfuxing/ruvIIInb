@@ -228,11 +228,11 @@ Z.c    <- Z[ctl,] - gmean[ctl]
 # initiate W (m x k)
 #Wsub <- Matrix::crossprod(Z.c,alpha.c) %*% solve(Matrix::crossprod(alpha.c)) 
 Wsub      <- matrix(0,nsub,k)
-Wsub[,1]  <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,1])) %*% solve(Matrix::crossprod(as.matrix(alpha.c[,1]),as.matrix(alpha.c[,1]))) 
+Wsub[,1]  <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,1])) %*% solve(lambda.a + Matrix::crossprod(as.matrix(alpha.c[,1]),as.matrix(alpha.c[,1]))) 
 if(k>1) {
  for(j in 2:k) {
    Z.c <- Z.c - outer(alpha.c[,j-1],Wsub[,j-1])
-   Wsub[,j] <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,j])) %*% solve(Matrix::crossprod(as.matrix(alpha.c[,j]),as.matrix(alpha.c[,j]))) 
+   Wsub[,j] <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,j])) %*% solve(lambda.a + Matrix::crossprod(as.matrix(alpha.c[,j]),as.matrix(alpha.c[,j]))) 
  }
 }
 # reduce outliers
@@ -413,10 +413,10 @@ while(!conv) {
  # }
  # as.matrix(out)
  #}
-
  Z.c     <- Z[ctl,]-gmean[ctl]
- alpha.c <- alpha[ctl,]
+ alpha.c <- alpha[ctl,,drop=FALSE]
  wt.ctl <- rowMeans(sig.inv[ctl,])
+
  Wsub[,1]  <- Matrix::crossprod(Z.c,as.matrix(alpha.c[,1]*wt.ctl)) %*% solve(lambda.a + Matrix::crossprod(as.matrix(alpha.c[,1]*wt.ctl),as.matrix(alpha.c[,1]))) 
  if(k>1) {
   for(j in 2:k) {
@@ -596,7 +596,7 @@ if(conv) {
  gmean <- best.gmean
  Mb  <- best.Mb
  psi   <- best.psi
- alpha.c <- as.matrix(alpha[ctl,])
+ alpha.c <- alpha[ctl,,drop=FALSE]
  # estimate W for all samples (initial)
  print('Estimating W for all samples...')
  bef=Sys.time()
@@ -605,7 +605,7 @@ if(conv) {
  # block size variable
  block.size <- min(5000,ncol(Y))
  nb    <- ceiling(ncol(Y)/block.size)
- alpha.c <- alpha[ctl,]
+ alpha.c <- alpha[ctl,,drop=FALSE]
  for(block in 1:nb) {
   start.idx <- (block-1)*block.size+1 ; end.idx <- min(ns,block*block.size)
   Ysub  <- as.matrix(Y[ctl,start.idx:end.idx])
