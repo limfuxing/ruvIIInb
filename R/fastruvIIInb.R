@@ -51,6 +51,13 @@ if(zero.Mrows) {
    stop('Less than 1% of cells have known annotation. Please increase the pct of cells with known annotation to 1%')
 }
 
+
+# check if any cols of M matrix has zero sum 
+zero.Mcols <- any(colSums(M)==0)
+if(zero.Mcols) {
+  stop(paste0('Columns ', which(colSums(M)==0),' of the M matrix has zero sum. Pls remove these columns and re-run'))
+}
+
 # force M matrix into logical matrix
 mode(M) <- 'logical'
 M       <- as.matrix(M)
