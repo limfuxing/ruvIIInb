@@ -21,11 +21,12 @@
 #' @param nc.pool the number of cells per pool (used for defining pseudocells). The default is 20. Only relevant when use.pseudosample=TRUE.
 #' @param batch.disp whether to fit batch-specific dispersion parameter for each gene. The default is FALSE.
 #' @param pCells.touse the proportion of a priori annotated cells used to estimate alpha and dispersion parameter (Default=20%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10% of the original subset of cells will be used to estimate alpha.
+#' @param block.size the maximum number of cells for block processing when estimating W matrix. Larger block size can be quicker but requires higher RAM. Default = 5000.
   
 #' @return A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
 #' @export
 fastruvIII.nb <- function(Y,M,ctl,k=2,robust=FALSE,ortho.W=FALSE,lambda.a=0.01,lambda.b=16,batch=NULL,step.fac=0.5,inner.maxit=50,outer.maxit=25,
-        ncores=2,use.pseudosample=FALSE,nc.pool=20,batch.disp=FALSE,pCells.touse=0.2) {
+        ncores=2,use.pseudosample=FALSE,nc.pool=20,batch.disp=FALSE,pCells.touse=0.2,block.size=5000) {
 
 # register parallel backend
 #register(BPPARAM)
@@ -220,7 +221,7 @@ proj.Z <- projection(rep.sub,Zmat=Z)[,apply(Msub,1,which)]
 RM_Z   <- Z - proj.Z
 U0     <- irlba::irlba(RM_Z,nv=k)$v
 # alpha(n x k) matrix
-alpha  <- Z %*% U0
+alpha  <- Z %*% U0 %*% Matrix::chol2inv(chol(Matrix::crossprod(U0)+lambda.a*diag(k)))
 
 # reduce outliers
 a.med <- matrixStats::colMedians(alpha)
@@ -261,6 +262,7 @@ bef   <- Sys.time()
 Wa     <- Matrix::tcrossprod(alpha,Wsub)
 Z.res  <- Z -  Wa  - gmean
 Mb  <- tryCatch({ projection(rep.sub,Zmat=Z.res,Wmat=NULL,lambda=lambda.b)}, error = function(e) {NA})
+Mb[ctl,] <- 0
 
 # estimate initial psi
 bef <- Sys.time() 
@@ -306,6 +308,14 @@ while(!conv) {
  
  ### calculate initial loglik
  lmu.hat    <- gmean + Mb[,apply(Msub,1,which)] +  Matrix::tcrossprod(alpha,Wsub) 
+
+ # weight based on NB
+ if(nbatch>1)
+  sig.inv<- 1/(exp(-lmu.hat) + sweep(psi[,sub.batch],2,rep(1,nsub),'/'))
+ if(nbatch==1)
+  sig.inv<- 1/(exp(-lmu.hat) +outer(psi,rep(1,nsub),'/'))
+ wt.ctl <- rowMeans(sig.inv[ctl,])
+
  if(nbatch>1) {
   temp <- foreach(i=1:nsub, .combine=c) %dopar% {
     tmp <- dnbinom(Ysub[,i],mu=exp(lmu.hat[,i]),size=1/psi[,sub.batch[i]],log=TRUE)
@@ -326,7 +336,7 @@ while(!conv) {
  step <- rep(1,nsub)
  conv.beta <- FALSE
  # saving temporary best estimate
- best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb; best.gmean <- gmean
+ best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb; best.gmean <- gmean ; best.wtctl <- wt.ctl
  
  iter <- 1
  halving <- 0
@@ -505,7 +515,7 @@ while(!conv) {
   if(degener) {
     check.gene <- loglik>loglik.tmp
     step[check.gene] <- step[check.gene]*step.fac
-    Wsub    <- best.W; alpha <- best.a ; Mb <- best.Mb ; psi <- best.psi ; gmean <- best.gmean 
+    Wsub    <- best.W; alpha <- best.a ; Mb <- best.Mb ; psi <- best.psi ; gmean <- best.gmean ; wt.ctl <- best.wtctl 
     halving <- halving + 1
     if(halving>=3) {
      loglik.tmp <- loglik
@@ -517,7 +527,7 @@ while(!conv) {
    logl.beta  <- c(logl.beta,sum(loglik))
    print(paste0('Outer Iter ',iter.outer, ', Inner iter ', iter, ' logl-likelihood:', logl.beta[length(logl.beta)]))
    # saving temporary best estimate
-   best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb ; best.gmean <- gmean 
+   best.W <- Wsub ; best.psi <- psi ; best.a <- alpha; best.Mb <- Mb ; best.gmean <- gmean ; best.wtctl <- wt.ctl
    iter <- iter + 1
    halving <- 0
   }
@@ -603,14 +613,16 @@ if(conv) {
  gmean <- best.gmean
  Mb  <- best.Mb
  psi   <- best.psi
+ wt.ctl <- best.wtctl
  alpha.c <- alpha[ctl,,drop=FALSE]
  # estimate W for all samples (initial)
  print('Estimating W for all samples...')
  bef=Sys.time()
- W <- matrix(0,ns,nW)
+ #W <- irlba::irlba(Y[ctl,],nv=k)$v
+ W <- matrix(0,ncol(Y),k)
  W[subsamples.org[subsubsamples.org],] <- Wsub[1:length(subsubsamples.org),]
  # block size variable
- block.size <- min(5000,ncol(Y))
+ block.size <- min(block.size,ncol(Y))
  nb    <- ceiling(ncol(Y)/block.size)
  alpha.c <- alpha[ctl,,drop=FALSE]
  for(block in 1:nb) {
@@ -685,21 +697,35 @@ if(conv) {
 
 # now calculate Mb
 print('Estimating Mb....')
-Mb.all <- matrix(0,nrow(Y),ncol(Y))
+Mb.all <- Y
 # for cells with annotation
 idx.annot <- unlist(rep.ind)
 Mb.all[,idx.annot] <- Mb[,apply(M[idx.annot,],1,which)]
 # for other cells
 if(length(idx.annot) < ncol(Y) ) {
- lmu  <- gmean + Matrix::tcrossprod(alpha,W) + Mb.all
- Z    <- Mb.all + ( (as.matrix(Y)+0.01)/(exp(lmu)+0.01) - 1)
- if(nbatch>1)
-  wtmat<- 1/(exp(-lmu) + psi[,batch])
- if(nbatch==1)
-  wtmat<- 1/(exp(-lmu) + psi)
- Mb.all[,-idx.annot] <- Z[,-idx.annot] * (wtmat[,-idx.annot]/(wtmat[,-idx.annot]+lambda.b))
- Mb.all[ctl,] <- 0
+ for(i in 1:3) {  
+  for(block in 1:nb) {
+    start.idx <- (block-1)*block.size+1 ; end.idx <- min(ns,block*block.size)
+    lmu  <- gmean + Matrix::tcrossprod(alpha,W[start.idx:end.idx,,drop=FALSE]) + as.matrix(Mb.all[,start.idx:end.idx])
+    Z    <- as.matrix(Mb.all[,start.idx:end.idx]) + ( (as.matrix(Y[,start.idx:end.idx])+0.01)/(exp(lmu)+0.01) - 1)
+    if(nbatch>1)
+     wtmat<- 1/(exp(-lmu) + psi[,batch[start.idx:end.idx]])
+    if(nbatch==1)
+     wtmat<- 1/(exp(-lmu) + psi)
+    Mb.all[,start.idx:end.idx] <- Z * (wtmat/(wtmat+lambda.b))
+  }
+ }
 }
+Mb.all[,idx.annot] <- Mb[,apply(M[idx.annot,],1,which)]
+Mb.all[ctl,] <- 0
+
+#
+Mb.med  <- DelayedMatrixStats::rowMedians(Mb.all[,idx.annot])
+Mb.mad  <- DelayedMatrixStats::rowMads(Mb.all[,idx.annot])
+high    <- Mb.all > (Mb.med+4*Mb.mad)
+low     <- Mb.all < (Mb.med-4*Mb.mad)
+Mb.all  <- (1-(high | low))*Mb.all + high*(Mb.med+4*Mb.mad) + low*(Mb.med-4*Mb.mad)
+
 # calibrate alpha and W
 #for(k in 1:nW) {
 # ab.W     <- Rfast::lmfit(y=Wsub[1:length(subsubsamples.org),k],x=cbind(1,W[subsamples.org[subsubsamples.org],k]))$be

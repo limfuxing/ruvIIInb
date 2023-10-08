@@ -4,7 +4,12 @@
 \alias{get.res}
 \title{Produce normalized count data after adjusting for unwanted variations}
 \usage{
-get.res(out, type = c("logcounts", "pearson", "quantile"), batch = NULL)
+get.res(
+  out,
+  type = c("logcounts", "pearson", "quantile"),
+  batch = NULL,
+  block.size = 5000
+)
 }
 \arguments{
 \item{out}{output of call to ruvIII.nb or fastruvIII.nb function.}
@@ -12,6 +17,8 @@ get.res(out, type = c("logcounts", "pearson", "quantile"), batch = NULL)
 \item{type}{type of normalized data. Supported options are 'quantile' (percentile-adjusted count), 'pearson' (pearson residuals) and logcounts (log normalized count).}
 
 \item{batch}{numeric vector containing batch information for each sample.Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.}
+
+\item{block.size}{the maximum number of cells for block processing when returning the corrected expression matrix. Larger block size can be quicker but requires higher RAM. Default = 5000.}
 }
 \value{
 A matrix containing the normalized data

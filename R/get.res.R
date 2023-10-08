@@ -5,9 +5,11 @@
 #' @param out  output of call to ruvIII.nb or fastruvIII.nb function.
 #' @param type type of normalized data. Supported options are 'quantile' (percentile-adjusted count), 'pearson' (pearson residuals) and logcounts (log normalized count).
 #' @param batch numeric vector containing batch information for each sample.Must correspond to columns of count matrix. Only needed if batch-specific dispersion parameter is fitted.
+#' @param block.size the maximum number of cells for block processing when returning the corrected expression matrix. Larger block size can be quicker but requires higher RAM. Default = 5000.
+
 
 #' @return A matrix containing the normalized data
-get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL) 
+get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL,block.size=5000) 
 {
  Y <- out$counts
 
@@ -16,7 +18,7 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL)
  }
  require(DelayedArray)
  ns    <- ncol(Y)
- block.size <- min(5000,ncol(Y))
+ block.size <- min(block.size,ncol(Y))
  setAutoRealizationBackend("HDF5Array")
  sink <- AutoRealizationSink(c(nrow(Y), ncol(Y)))
  sink_grid <- RegularArrayGrid(dim(sink), spacings=c(nrow(sink),block.size))
@@ -30,7 +32,7 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL)
   Ysub  <- as.matrix(Y[,start.idx:end.idx])
   Wa <- Matrix::tcrossprod(out$a,out$W[start.idx:end.idx,])
   mu <- exp(Wa + out$gmean) 
-  mu.full <- exp(Wa + out$gmean + out$Mb[,start.idx:end.idx,drop=FALSE])
+  mu.full <- exp(Wa + out$gmean + as.matrix(out$Mb[,start.idx:end.idx,drop=FALSE]))
   Wa.mean = out$a %*% as.matrix(colMeans(out$W))
 
   # get Pearson residual
@@ -61,7 +63,7 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL)
     dev <- log(Ysub/mu + 1)
   }
   if (any(type == "quantile")) {
-    mu.noUV <- exp(out$Mb[,start.idx:end.idx,drop=FALSE] + out$gmean + c(Wa.mean))
+    mu.noUV <- exp(as.matrix(out$Mb[,start.idx:end.idx,drop=FALSE]) + out$gmean + c(Wa.mean))
     if (is.null(dim(out$psi))) {
       if(!is.null(dim(out$pi0)))  {
         a <- ZIM::pzinb(Ysub - 1, lambda = mu.full, k = 1/out$psi,omega = out$pi0[,curr.batch])

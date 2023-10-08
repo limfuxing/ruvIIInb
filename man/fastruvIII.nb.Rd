@@ -21,7 +21,8 @@ fastruvIII.nb(
   use.pseudosample = FALSE,
   nc.pool = 20,
   batch.disp = FALSE,
-  pCells.touse = 0.2
+  pCells.touse = 0.2,
+  block.size = 5000
 )
 }
 \arguments{
@@ -58,6 +59,8 @@ fastruvIII.nb(
 \item{batch.disp}{whether to fit batch-specific dispersion parameter for each gene. The default is FALSE.}
 
 \item{pCells.touse}{the proportion of a priori annotated cells used to estimate alpha and dispersion parameter (Default=20\%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10\% of the original subset of cells will be used to estimate alpha.}
+
+\item{block.size}{the maximum number of cells for block processing when estimating W matrix. Larger block size can be quicker but requires higher RAM. Default = 5000.}
 }
 \value{
 A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
