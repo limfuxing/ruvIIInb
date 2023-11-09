@@ -641,10 +641,15 @@ if(conv) {
  if(ncol(W)!=k) 
   W <- t(W)
 
- # normalize W and alpha
- calnorm.W <- sqrt(matrixStats::colSums2(W^2))
- #W     <- sweep(W,2,calnorm.W,'/')
- #alpha <- sweep(alpha,2,calnorm.W,'*')
+ # regularise W 
+ #
+ W.med  <- matrixStats::colMedians(Wsub)
+ W.mad  <- matrixStats::colMads(Wsub)
+ for(k in 1:nW) {
+   high <- W[,k] > (W.med[k]+4.*W.mad[k])
+   low  <- W[,k] < (W.med[k]-4.*W.mad[k])
+   W[,k]      <- (1-(high | low))*W[,k] + high*(W.med[k]+4*W.mad[k]) + low*(W.med[k]-4*W.mad[k])
+ }
 
  # orthogonalize W (optional)
  if(nW>1 & ortho.W)  
@@ -672,10 +677,12 @@ if(conv) {
   if(ncol(W)!=k) 
    W <- t(W)
 
-  # normalize W and alpha
-  calnorm.W <- sqrt(matrixStats::colSums2(W^2))
-  #W     <- sweep(W,2,calnorm.W,'/')
-  #alpha <- sweep(alpha,2,calnorm.W,'*')
+  # regularise W
+  for(k in 1:nW) {
+   high <- W[,k] > (W.med[k]+4.*W.mad[k])
+   low  <- W[,k] < (W.med[k]-4.*W.mad[k])
+   W[,k]      <- (1-(high | low))*W[,k] + high*(W.med[k]+4*W.mad[k]) + low*(W.med[k]-4*W.mad[k])
+  }
 
   # orthogonalize W (optional)
   if(nW>1 & ortho.W)  
