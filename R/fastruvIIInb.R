@@ -272,29 +272,37 @@ offs.psi <- offs[,psi.idx]
 bef  <- Sys.time()
 if(parallel) {
  if(nbatch==1) 
-  psi <- estimateDisp.par(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
+
+  psi <- tryCatch({ estimateDisp.par(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion}, 
+		error = function(e) {rep(NA,ngene)})
  if(nbatch>1) {
-  psi <- estimateDisp.par(Ysub.psi[,psi.batch==1],as.matrix(rep(1,sum(psi.batch==1))),
-				offset=offs.psi[,psi.batch==1],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion
+  psi <- tryCatch({ estimateDisp.par(Ysub.psi[,psi.batch==1],as.matrix(rep(1,sum(psi.batch==1))),
+				offset=offs.psi[,psi.batch==1],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion}, 
+				error = function(e) {rep(NA,ngene)})
   for(B in 2:max(psi.batch)) {
-      psi <- cbind(psi,estimateDisp.par(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
-				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion)
+      psi <- cbind(psi,tryCatch({estimateDisp.par(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
+				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion}, 
+				error = function(e) {rep(NA,ngene)}))
   }
  }
 } 
 if(!parallel) {
  if(nbatch==1) 
-  psi <- edgeR::estimateDisp(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE)$tagwise.dispersion
+  psi <- tryCatch({edgeR::estimateDisp(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE)$tagwise.dispersion}, 
+		error = function(e) {rep(NA,ngene)})
  if(nbatch>1) {
-  psi <- edgeR::estimateDisp(Ysub.psi[,psi.batch==1],as.matrix(rep(1,sum(psi.batch==1))),
-				offset=offs.psi[,psi.batch==1],tagwise=TRUE,robust=TRUE)$tagwise.dispersion
+  psi <- tryCatch({edgeR::estimateDisp(Ysub.psi[,psi.batch==1],as.matrix(rep(1,sum(psi.batch==1))),
+				offset=offs.psi[,psi.batch==1],tagwise=TRUE,robust=TRUE)$tagwise.dispersion}, 
+		error = function(e) {rep(NA,ngene)})
   for(B in 2:max(sub.batch)) 
-   psi <- cbind(psi,edgeR::estimateDisp(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
-				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE)$tagwise.dispersion)
+   psi <- cbind(psi,tryCatch({edgeR::estimateDisp(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
+				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE)$tagwise.dispersion}, 
+		error = function(e) {rep(NA,ngene)}))
  }
 }
 aft <- Sys.time()
 #print(paste0('time to calculate psi:',  difftime(aft,bef,units='secs')))
+psi[which(is.na(psi))] <- 0
 
 # initiate
 conv <- FALSE
@@ -553,24 +561,24 @@ if(updt.psi) {
 if(parallel) {
  if(nbatch==1) 
   psi.new <- tryCatch({ estimateDisp.par(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,
-				tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion}, error = function(e) {NA})
+				tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion}, error = function(e) {rep(NA,ngene)})
  if(nbatch>1) {
   psi.new <- psi
   for(B in 1:max(psi.batch)) 
    psi.new[,B]<-tryCatch({estimateDisp.par(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
-				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion},error= function(e) {NA})
+				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE,BPPARAM=BPPARAM)$tagwise.dispersion},error= function(e) {rep(NA,ngene)})
  }
 }
 
 if(!parallel) {
  if(nbatch==1) 
-  psi.new <- tryCatch({ edgeR::estimateDisp(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE)$tagwise.dispersion},error = function(e) {NA})
+  psi.new <- tryCatch({ edgeR::estimateDisp(Ysub.psi,as.matrix(rep(1,nsub.psi)),offset=offs.psi,tagwise=TRUE,robust=TRUE)$tagwise.dispersion},error = function(e) {rep(NA,ngene)})
  if(nbatch>1) {
   psi.new <- psi
   for(B in 1:max(psi.batch)) 
    psi.new[,B] <- tryCatch({ edgeR::estimateDisp(Ysub.psi[,psi.batch==B],as.matrix(rep(1,sum(psi.batch==B))),
 				offset=offs.psi[,psi.batch==B],tagwise=TRUE,robust=TRUE)$tagwise.dispersion},
-				error = function(e) {NA})
+				error = function(e) {rep(NA,ngene)})
  }
 }
 # update psi
