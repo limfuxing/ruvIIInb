@@ -17,13 +17,24 @@ makeSCE<-function (obj, cData=NULL, batch = NULL, assays = c('pearson','logPAC')
   if(any(! assays %in% c('logcounts','logPAC','pearson')))
     stop("'Wrong names of corrected assays data was specified. Available corrected data assays are logcounts,logPAC and pearson")
 
-  sce.obj <- SingleCellExperiment::SingleCellExperiment(assays = list(counts = as(obj$counts,"sparseMatrix")), colData = cData)
-  if(any(assays=='logcounts'))
-   assays(sce.obj, withDimnames=FALSE)$logcounts <- tryCatch({as( get.res(obj,type='logcounts',batch = batch),"sparseMatrix" )}, error = function(e) {NULL})
-  if(any(assays=='pearson'))
-   assays(sce.obj, withDimnames=FALSE)$pearson <- tryCatch({as( get.res(obj,type='pearson',batch = batch), "sparseMatrix")}, error = function(e) {NULL})
-  if(any(assays=='logPAC'))
-   assays(sce.obj, withDimnames=FALSE)$logPAC <- tryCatch({as(  log(get.res(obj,type='quantile',batch = batch)+1), "sparseMatrix")}, error = function(e) {NULL})
+  colnames(obj$a) <- paste0('alpha',1:ncol(obj$a))
+  features.data <- data.frame(obj$a,obj$psi)
+  sce.obj <- SingleCellExperiment::SingleCellExperiment(assays = list(counts = as(obj$counts,"sparseMatrix")), colData = cData, rowData=features.data)
 
+  if(any(assays=='logcounts')) {
+   assays(sce.obj, withDimnames=FALSE)$logcounts <- tryCatch({as( get.res(obj,type='logcounts',batch = batch),"sparseMatrix" )}, error = function(e) {NULL})
+   if(is.null(assays(sce.obj, withDimnames=FALSE)$logcounts))
+     warning('failed to return log normalised counts')
+  }
+  if(any(assays=='pearson')) {
+   assays(sce.obj, withDimnames=FALSE)$pearson <- tryCatch({as( get.res(obj,type='pearson',batch = batch), "sparseMatrix")}, error = function(e) {NULL})
+   if(is.null(assays(sce.obj, withDimnames=FALSE)$pearson))
+     warning('failed to return Pearson residuals')
+  }
+  if(any(assays=='logPAC')) {
+   assays(sce.obj, withDimnames=FALSE)$logPAC <- tryCatch({as(  log(get.res(obj,type='quantile',batch = batch)+1), "sparseMatrix")}, error = function(e) {NULL})
+   if(is.null(assays(sce.obj, withDimnames=FALSE)$logPAC))
+     warning('failed to return percentile-adjusted counts (PAC)')
+  }
   sce.obj
 }

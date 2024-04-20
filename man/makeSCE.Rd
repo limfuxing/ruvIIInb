@@ -4,12 +4,7 @@
 \alias{makeSCE}
 \title{Create SingleCellExperiment object containing normalized data}
 \usage{
-makeSCE(
-  obj,
-  cData = NULL,
-  batch = NULL,
-  assays = c("logcounts", "logPAC", "pearson")
-)
+makeSCE(obj, cData = NULL, batch = NULL, assays = c("pearson", "logPAC"))
 }
 \arguments{
 \item{obj}{object containing output of call to ruvIII.nb or fastruvIII.nb function.}

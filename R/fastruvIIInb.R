@@ -6,6 +6,7 @@
 #'
 #' @param Y raw count as DelayedMatrix object with genes as rows and cells as columns
 #' @param M replicate matrix with number of rows equal to the number of cells and number of columns equal to the number of distinct sub-population of cells: M(i,j) = 1 if cell i is part of sub-population j and 0 otherwise. If a row has all zero entries, it means the corresponding cell is not assumed to belong to any of the known sub-populations (a priori unannotated cells). 
+#' @param cData cell-level covariates to be included in the SingleCellExperiment output.
 #' @param ctl  either logical vector of length n with TRUE = control genes OR a character vector of names of control genes
 #' @param k dimension of unwanted variation against which the data is to be normalized against. Default is 2.
 #' @param robust logical value. Whether to use Huber's robust weight in the iterative reweighted least squares (IRLS) algorithm. Default is FALSE.
@@ -23,9 +24,9 @@
 #' @param pCells.touse the proportion of a priori annotated cells used to estimate alpha and dispersion parameter (Default=20%). When pseudocells are used (use.pseudosample=TRUE), ultimately only 10% of the original subset of cells will be used to estimate alpha.
 #' @param block.size the maximum number of cells for block processing when estimating W matrix. Larger block size can be quicker but requires higher RAM. Default = 5000.
   
-#' @return A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
+#' @return A SingleCellExperiment object containing the raw and adjusted data in the assays slot, cell-level data including the estimated unwanted factors and the M matrix in the colData slot and the gene-level data including the coefficients associated with the unwanted factors in rowData slot. 
 #' @export
-fastruvIII.nb <- function(Y,M,ctl,k=2,robust=FALSE,ortho.W=FALSE,lambda.a=0.01,lambda.b=16,batch=NULL,step.fac=0.5,inner.maxit=50,outer.maxit=25,
+fastruvIII.nb <- function(Y,M,cData=NULL,ctl,k=2,robust=FALSE,ortho.W=FALSE,lambda.a=0.01,lambda.b=16,batch=NULL,step.fac=0.5,inner.maxit=50,outer.maxit=25,
         ncores=2,use.pseudosample=FALSE,nc.pool=20,batch.disp=FALSE,pCells.touse=0.2,block.size=5000) {
 
 # register parallel backend
@@ -755,8 +756,34 @@ if(use.pseudosample) {
    psi <- psi[,1:nbatch.org]
 }
 #output
-return( list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"Mb"=Mb.all, "gmean"=gmean,
-		"psi"=psi,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch,corW=cor.check,subsamples=subsamples.org,Wsub=Wsub,Mb.sub=Mb) )
+
+# bound dispersion parameters (large disp slow the process)
+if(is.null(dim(psi))) {
+ max.val  <- exp( median(log(psi)) + 3*mad(log(psi)) )
+ winsorize<- psi>max.val
+ psi <- psi*(1-winsorize) + winsorize*max.val
+}
+
+if(!is.null(dim(psi))) {
+ for(i in 1:ncol(psi)) {
+  max.val  <- exp( median(log(psi[,i])) + 3*mad(log(psi[,i])) )
+  winsorize<- psi[,i]>max.val
+  psi[,i]  <- psi[,i]*(1-winsorize) + winsorize*max.val
+ }
+}
+
+# get adjusted data
+print('Obtaining adjusted data...')
+colnames(W) <- paste0('W',1:k)
+colnames(M) <- paste0('M',1:ncol(M))
+colnames(alpha) <- paste0('alpha',1:k)
+
+out <-  list("counts"=Y,"W"=W, "M"=M, "ctl"=ctl, "logl"=logl.outer, "a"=alpha,"Mb"=Mb.all, "gmean"=gmean,
+		"psi"=psi,'L.a'=lambda.a,'L.b'=lambda.b,batch=batch,corW=cor.check,subsamples=subsamples.org,Wsub=Wsub,Mb.sub=Mb)
+# expand cData
+cData <- data.frame(logLS=log(DelayedMatrixStats::colSums2(Y)),ruvIIInb_batch=out$batch,cbind(cData,W,M))
+sce <-  makeSCE(out, cData=cData, batch = NULL, assays = 'logPAC')
+return(sce)
 }
 
 #### Helpers functions ######################################################################################

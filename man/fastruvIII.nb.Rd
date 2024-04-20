@@ -7,6 +7,7 @@
 fastruvIII.nb(
   Y,
   M,
+  cData = NULL,
   ctl,
   k = 2,
   robust = FALSE,
@@ -29,6 +30,8 @@ fastruvIII.nb(
 \item{Y}{raw count as DelayedMatrix object with genes as rows and cells as columns}
 
 \item{M}{replicate matrix with number of rows equal to the number of cells and number of columns equal to the number of distinct sub-population of cells: M(i,j) = 1 if cell i is part of sub-population j and 0 otherwise. If a row has all zero entries, it means the corresponding cell is not assumed to belong to any of the known sub-populations (a priori unannotated cells).}
+
+\item{cData}{cell-level covariates to be included in the SingleCellExperiment output.}
 
 \item{ctl}{either logical vector of length n with TRUE = control genes OR a character vector of names of control genes}
 
@@ -63,10 +66,29 @@ fastruvIII.nb(
 \item{block.size}{the maximum number of cells for block processing when estimating W matrix. Larger block size can be quicker but requires higher RAM. Default = 5000.}
 }
 \value{
-A list containing the raw data (as sparse matrix), the unwanted factors, regression coefficients associated with the unwanted factors, the M matrix and the estimates of dispersion parameters
+A SingleCellExperiment object containing the raw and adjusted data in the assays slot, cell-level data including the estimated unwanted factors and the M matrix in the colData slot and the gene-level data including the coefficients associated with the unwanted factors in rowData slot.
 }
 \description{
 This function performs fast version of ruvIIInb method to remove unwanted variation from sequencing count data. Currently, only Negative Binomial model for UMI data is supported. It takes raw count matrix with features (genes/transcript in scRNA-seq) as rows and samples (cells in scRNA-seq) as columns.
 Users need to specify the set of negative control genes (i.e genes where the between cells variation is assumed to be solely due to the unwanted variation)
 and the (pseudo)replicate matrix that define sets of cells that can be considered technical replicates.
+}
+
+\examples{
+# load SCE object containing counts
+data(cellline_sce)
+cellline_sce
+# load M matrix: only approx 10 pct of cells are annotated
+data(cellline_M)
+# load names of control genes
+data(Hs.schk)
+# run fastruvIII.nb with k=3
+sce <- fastruvIII.nb(assays(cellline_sce)$counts,cData=colData(cellline_sce),M=cellline_M,ctl=Hs.schk,k=3,ncores=4)
+# produce UMAP of adjusted data
+sce <- scater::runUMAP(sce,exprs_values='logPAC')
+# plot UMAP, color by celltypes
+p1  <- scater::plotUMAP(sce, colour_by='new.lables')
+# plot UMAP, color by batch
+p2  <- scater::plotUMAP(sce, colour_by='batch')
+gridExtra::grid.arrange(p1,p2,ncol=2)
 }

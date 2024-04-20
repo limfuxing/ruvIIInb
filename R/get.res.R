@@ -35,6 +35,16 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL,bl
   mu.full <- exp(Wa + out$gmean + as.matrix(out$Mb[,start.idx:end.idx,drop=FALSE]))
   Wa.mean = out$a %*% as.matrix(colMeans(out$W))
 
+  # winsorize mean (to avoid slow process for extremely large mean)
+  max.val  <- exp(matrixStats::rowMedians(log(mu)) + 4*matrixStats::rowMads(log(mu)))
+  winsorize<- mu>max.val
+  mu <- mu*(1-winsorize) + winsorize*max.val
+
+  max.val  <- exp(matrixStats::rowMedians(log(mu.full)) + 4*matrixStats::rowMads(log(mu.full)))
+  winsorize<- mu.full>max.val
+  mu.full <- mu.full*(1-winsorize) + winsorize*max.val
+
+
   # get Pearson residual
   if (any(type == "pearson")) {
     if (is.null(dim(out$psi))) {
@@ -64,6 +74,11 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL,bl
   }
   if (any(type == "quantile")) {
     mu.noUV <- exp(as.matrix(out$Mb[,start.idx:end.idx,drop=FALSE]) + out$gmean + c(Wa.mean))
+    # winsorize
+    max.val  <- exp(matrixStats::rowMedians(log(mu.noUV)) + 4*matrixStats::rowMads(log(mu.noUV)))
+    winsorize<- mu.noUV>max.val
+    mu.noUV <- mu.noUV*(1-winsorize) + winsorize*max.val
+
     if (is.null(dim(out$psi))) {
       if(!is.null(dim(out$pi0)))  {
         a <- ZIM::pzinb(Ysub - 1, lambda = mu.full, k = 1/out$psi,omega = out$pi0[,curr.batch])
@@ -73,9 +88,9 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL,bl
         a <- pnbinom(Ysub - 1, mu = mu.full, size = 1/out$psi)
         b <- a + dnbinom(Ysub, mu = mu.full, size = 1/out$psi)
       }
-      a[a > 0.995] <- 0.995 ; a[a < 0.005] <- 0.005
-      b[b > 0.995] <- 0.995 ; b[b < 0.005] <- 0.005
       p <- (a+b)/2
+      p[p > 0.995] <- 0.995 ; p[p < 0.005] <- 0.005
+
       if(!is.null(dim(out$pi0))) {
        avg.pi0 <- rowMeans(out$pi0)
        dev <- matrix(ZIM::qzinb(p,lambda = mu.noUV,k = 1/out$psi, omega = avg.pi0),nrow(Ysub),ncol(Ysub))
@@ -93,9 +108,9 @@ get.res<-function (out, type = c("logcounts","pearson","quantile"),batch=NULL,bl
        a <- pnbinom(Ysub - 1, mu = mu.full, size = 1/out$psi[,curr.batch])
        b <- a + dnbinom(Ysub, mu = mu.full, size = 1/out$psi[,curr.batch])
       }
-      a[a > 0.995] <- 0.995 ; a[a < 0.005] <- 0.005
-      b[b > 0.995] <- 0.995 ; b[b < 0.005] <- 0.005
       p <- (a+b)/2
+      p[p > 0.995] <- 0.995 ; p[p < 0.005] <- 0.005
+
       if(!is.null(dim(out$pi0))) {
        avg.pi0 <- rowMeans(out$pi0)
        ref.batch <- which.min(colMeans(out$psi))

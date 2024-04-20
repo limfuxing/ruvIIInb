@@ -1,6 +1,6 @@
 Package: ruvIIInb
 Title: Removing unwanted variation from sequencing count data
-Version: 0.8.2.0
+Version: 0.9.2.0
 Authors@R: 
     person(given = "Agus",
            family = "Salim",
