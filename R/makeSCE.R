@@ -22,18 +22,21 @@ makeSCE<-function (obj, cData=NULL, batch = NULL, assays = c('pearson','logPAC')
   sce.obj <- SingleCellExperiment::SingleCellExperiment(assays = list(counts = as(obj$counts,"sparseMatrix")), colData = cData, rowData=features.data)
 
   if(any(assays=='logcounts')) {
-   assays(sce.obj, withDimnames=FALSE)$logcounts <- tryCatch({as( get.res(obj,type='logcounts',batch = batch),"sparseMatrix" )}, error = function(e) {NULL})
-   if(is.null(assays(sce.obj, withDimnames=FALSE)$logcounts))
+   SummarizedExperiment::assays(sce.obj, withDimnames=FALSE)$logcounts <- 
+			tryCatch({as( get.res(obj,type='logcounts',batch = batch),"sparseMatrix" )}, error = function(e) {NULL})
+   if(is.null(SummarizedExperiment::assays(sce.obj)$logcounts))
      warning('failed to return log normalised counts')
   }
   if(any(assays=='pearson')) {
-   assays(sce.obj, withDimnames=FALSE)$pearson <- tryCatch({as( get.res(obj,type='pearson',batch = batch), "sparseMatrix")}, error = function(e) {NULL})
-   if(is.null(assays(sce.obj, withDimnames=FALSE)$pearson))
+   SummarizedExperiment::assays(sce.obj, withDimnames=FALSE)$pearson <- 
+			tryCatch({as( get.res(obj,type='pearson',batch = batch), "sparseMatrix")}, error = function(e) {NULL})
+   if(is.null(SummarizedExperiment::assays(sce.obj)$pearson))
      warning('failed to return Pearson residuals')
   }
   if(any(assays=='logPAC')) {
-   assays(sce.obj, withDimnames=FALSE)$logPAC <- tryCatch({as(  log(get.res(obj,type='quantile',batch = batch)+1), "sparseMatrix")}, error = function(e) {NULL})
-   if(is.null(assays(sce.obj, withDimnames=FALSE)$logPAC))
+   SummarizedExperiment::assays(sce.obj, withDimnames=FALSE)$logPAC <- 
+			tryCatch({as(  log(get.res(obj,type='quantile',batch = batch)+1), "sparseMatrix")}, error = function(e) {NULL})
+   if(is.null(SummarizedExperiment::assays(sce.obj)$logPAC))
      warning('failed to return percentile-adjusted counts (PAC)')
   }
   sce.obj
