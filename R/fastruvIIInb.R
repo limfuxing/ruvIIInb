@@ -60,6 +60,11 @@ if(zero.Mcols) {
   stop(paste0('Columns ', which(colSums(M)==0),' of the M matrix has zero sum. Pls remove these columns and re-run'))
 }
 
+# warn if M matrix has single column
+if(ncol(M)==1) {
+  print(paste0('Warning: M matrix has only one column! RUV-III-NB will proceed assuming all annotated cells (samples) have the same biology'))
+}
+
 # force M matrix into logical matrix
 mode(M) <- 'logical'
 M       <- as.matrix(M)
@@ -716,7 +721,7 @@ print('Estimating Mb....')
 Mb.all <- Y
 # for cells with annotation
 idx.annot <- unlist(rep.ind)
-Mb.all[,idx.annot] <- Mb[,apply(M[idx.annot,],1,which)]
+Mb.all[,idx.annot] <- Mb[,apply(M[idx.annot,,drop=FALSE],1,which)]
 # for other cells
 if(length(idx.annot) < ncol(Y) ) {
  for(i in 1:3) {  
@@ -732,7 +737,7 @@ if(length(idx.annot) < ncol(Y) ) {
   }
  }
 }
-Mb.all[,idx.annot] <- Mb[,apply(M[idx.annot,],1,which)]
+Mb.all[,idx.annot] <- Mb[,apply(M[idx.annot,,drop=FALSE],1,which)]
 Mb.all[ctl,] <- 0
 
 #
